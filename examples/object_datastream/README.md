@@ -23,7 +23,7 @@ If you have not already done so, make sure that you satisfy the
 Upon connecting to the local Astarte instance, the instance SDK will start transmitting
 periodically aggregate objects.
 
-We can check if the publish from the device has been correctly received on the server using
+We can check if the publishing from the device has been correctly received on the server using
 `get-samples` as follows:
 ```
 astartectl appengine

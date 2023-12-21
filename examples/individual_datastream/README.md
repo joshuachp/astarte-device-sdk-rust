@@ -25,7 +25,7 @@ If you have not already done so, make sure that you satisfy the
 Now that our device is connected to Astarte and is sending periodically data we can check if
 the Astarte cluster is storing correctly this data.
 
-We can check if the publish from the device has been correctly received on the server using
+We can check if the publishing from the device has been correctly received on the server using
 `get-samples` as follows:
 ```
 astartectl appengine --appengine-url http://localhost:4002/ --realm-key <REALM>_private.pem
