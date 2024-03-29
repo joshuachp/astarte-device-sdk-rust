@@ -18,8 +18,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#[cfg(feature = "message-hub")]
+use astarte_message_hub_proto::InterfacesJson;
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::ops::Deref;
 
@@ -89,6 +91,12 @@ impl Interfaces {
 
     pub(crate) fn remove(&mut self, interface_name: &str) -> Option<Interface> {
         self.interfaces.remove(interface_name)
+    }
+
+    /// Remove the interfaces which name is in the HashSet
+    pub(crate) fn remove_many(&mut self, to_remove: &HashSet<&str>) {
+        self.interfaces
+            .retain(|k, _v| !to_remove.contains(k.as_str()));
     }
 
     pub(crate) fn get_introspection_string(&self) -> String {
@@ -211,13 +219,23 @@ impl Interfaces {
     }
 
     /// Iter with removed interface
-    pub(crate) fn iter_with_removed<'a>(
+    pub(crate) fn iter_without_removed<'a>(
         &'a self,
         removed: &'a Interface,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
         self.interfaces
             .values()
             .filter(|i| i.interface_name() != removed.interface_name())
+    }
+
+    /// Iter with removed interfaces
+    pub(crate) fn iter_without_removed_many<'a>(
+        &'a self,
+        removed: &'a HashMap<&'a str, &'a Interface>,
+    ) -> impl Iterator<Item = &'a Interface> + Clone {
+        self.interfaces
+            .values()
+            .filter(|i| !removed.contains_key(i.interface_name()))
     }
 }
 
@@ -250,7 +268,7 @@ impl Deref for Validated {
 }
 
 #[derive(Debug)]
-pub(crate) struct ValidatedCollection(HashMap<String, Interface>);
+pub(crate) struct ValidatedCollection(pub(crate) HashMap<String, Interface>);
 
 impl Borrow<HashMap<String, Interface>> for ValidatedCollection {
     fn borrow(&self) -> &HashMap<String, Interface> {
@@ -263,6 +281,13 @@ impl Deref for ValidatedCollection {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+#[cfg(feature = "message-hub")]
+impl ValidatedCollection {
+    pub(crate) fn as_proto(&self) -> Result<InterfacesJson, InterfaceError> {
+        self.0.values().map(|i| i.as_proto()).try_collect()
     }
 }
 
