@@ -246,10 +246,7 @@ mod tests {
         ]
         .map(|i| i.to_string());
 
-        let mut names = to_add
-            .iter()
-            .map(|i| i.interface_name().to_string())
-            .collect_vec();
+        let mut names = to_remove.clone();
         names.sort();
 
         let mut introspection = Introspection::new(to_add.iter())
@@ -307,7 +304,9 @@ mod tests {
         res.sort();
         assert_eq!(res, names);
 
-        client.remove_interfaces(to_remove).await.unwrap();
+        let mut res = client.remove_interfaces(to_remove).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
 
         handle.await.unwrap();
     }
@@ -351,6 +350,9 @@ mod tests {
         let to_add = [i1.clone(), i2.clone()];
         let to_remove = [i1.interface_name(), i2.interface_name()].map(|i| i.to_string());
 
+        let mut names = to_remove.clone();
+        names.sort();
+
         let mut introspection = Introspection::new(to_add.iter())
             .to_string()
             .split(';')
@@ -388,9 +390,13 @@ mod tests {
             }
         });
 
-        client.extend_interfaces(to_add.clone()).await.unwrap();
+        let mut res = client.extend_interfaces(to_add.clone()).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
 
-        client.remove_interfaces(to_remove).await.unwrap();
+        let mut res = client.remove_interfaces(to_remove).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
 
         handle.await.unwrap();
     }
