@@ -46,10 +46,6 @@ Files: examples/individual_properties/configuration.json
 Copyright: SECO Mind Srl
 License: CC0-1.0
 
-Files: examples/additional_interfaces/*
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
 Files: e2e-test/interfaces/*
 Copyright: SECO Mind Srl
 License: CC0-1.0
