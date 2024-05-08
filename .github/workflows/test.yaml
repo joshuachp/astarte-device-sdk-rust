@@ -98,8 +98,8 @@ jobs:
         run: cargo generate-lockfile
       - name: Run cargo-tarpaulin with xml output
         run: cargo tarpaulin --engine llvm --locked --all-features --ignore-tests --lib --out xml -- --test-threads 1
-      - name: Upload to codecov.io
-        uses: codecov/codecov-action@v4
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{secrets.CODECOV_TOKEN}}
-          fail_ci_if_error: true
+          name: coverage
+          path: cobertura.xml
