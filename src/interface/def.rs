@@ -479,7 +479,7 @@ impl Display for MappingType {
 ///
 /// See [Reliability](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#astarte-mapping-schema-reliability)
 /// for more information.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone, Default, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum Reliability {
     /// If the transport sends the data

@@ -32,6 +32,7 @@ pub mod error;
 pub(crate) mod pairing;
 pub(crate) mod payload;
 pub mod registration;
+pub mod retention;
 mod topic;
 
 use std::{

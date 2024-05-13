@@ -27,6 +27,7 @@ use crate::introspection::AddInterfaceError;
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
+use crate::transport::mqtt::retention::RetentionError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
 
@@ -101,6 +102,9 @@ pub enum Error {
     /// This is an unrecoverable error for the SDK.
     #[error("disconnected from astarte")]
     Disconnected,
+    /// Retention operation failed
+    #[error("retention of packets failed")]
+    Retention(#[from] RetentionError),
     /// Error returned by the gRPC transport
     #[cfg(feature = "message-hub")]
     #[error(transparent)]

@@ -248,7 +248,7 @@ impl TryFrom<StoredRecord> for StoredProp {
 /// respective [`AstarteType`].
 #[derive(Clone, Debug)]
 pub struct SqliteStore {
-    db_conn: sqlx::SqlitePool,
+    pub(crate) db_conn: sqlx::SqlitePool,
 }
 
 impl SqliteStore {
