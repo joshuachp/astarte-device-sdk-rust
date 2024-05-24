@@ -6,7 +6,13 @@
 
 [package]
 name = "astarte-device-sdk"
+<<<<<<< HEAD
 version = "0.6.5"
+||||||| d7f9c55
+version = "0.5.3"
+=======
+version = "0.5.4"
+>>>>>>> release-0.5
 documentation = "https://docs.rs/astarte-device-sdk"
 edition = "2021"
 homepage = "https://astarte.cloud/"
@@ -24,8 +30,16 @@ name = "benchmark"
 harness = false
 
 [dependencies]
+<<<<<<< HEAD
 astarte-device-sdk-derive = { version = "=0.6.5", optional = true, path = "./astarte-device-sdk-derive" }
 async-trait = "0.1.2"
+||||||| d7f9c55
+astarte-device-sdk-derive = { version = "=0.5.3", optional = true, path = "./astarte-device-sdk-derive" }
+async-trait = "0.1.51"
+=======
+astarte-device-sdk-derive = { version = "=0.5.4", optional = true, path = "./astarte-device-sdk-derive" }
+async-trait = "0.1.51"
+>>>>>>> release-0.5
 base64 = "0.21.0"
 bson = { version = "2.1.0", features = ["chrono-0_4"] }
 chrono = { version = "0.4.14", features = ["serde"] }

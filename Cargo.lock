@@ -94,7 +94,13 @@ checksum = "15c4c2c83f81532e5845a733998b6971faca23490340a418e9b72a3ec9de12ea"
 
 [[package]]
 name = "astarte-device-sdk"
+<<<<<<< HEAD
 version = "0.6.5"
+||||||| d7f9c55
+version = "0.5.3"
+=======
+version = "0.5.4"
+>>>>>>> release-0.5
 dependencies = [
  "astarte-device-sdk-derive",
  "async-trait",
@@ -133,7 +139,13 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-derive"
+<<<<<<< HEAD
 version = "0.6.5"
+||||||| d7f9c55
+version = "0.5.3"
+=======
+version = "0.5.4"
+>>>>>>> release-0.5
 dependencies = [
  "quote",
  "syn 1.0.109",

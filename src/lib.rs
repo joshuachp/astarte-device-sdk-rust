@@ -391,8 +391,20 @@ where
                             // It can be borrowed as a &[u8]
                             let payload = publish.payload;
 
+<<<<<<< HEAD
                             if interface == "control" && path == "/consumer/properties" {
                                 debug!("Purging properties");
+||||||| d7f9c55
+                                if interface == "control" && path == "/consumer/properties" {
+                                    self.purge_properties(bdata).await?;
+                                    continue;
+                                }
+=======
+                                if interface == "control" && path == "/consumer/properties" {
+                                    self.purge_server_properties(bdata).await?;
+                                    continue;
+                                }
+>>>>>>> release-0.5
 
                                 self.purge_properties(&payload).await?;
 
@@ -496,14 +508,57 @@ where
         format!("{}/{}", self.realm, self.device_id)
     }
 
+<<<<<<< HEAD
     async fn purge_properties(&self, bdata: &[u8]) -> Result<(), Error> {
         let stored_props = self.store.load_all_props().await?;
+||||||| d7f9c55
+    async fn purge_properties(&self, bdata: Vec<u8>) -> Result<(), AstarteError> {
+        if let Some(db) = &self.database {
+            let stored_props = db.load_all_props().await?;
+=======
+    /// This function deletes all the stored server owned properties after receiving a publish on
+    /// `/control/consumer/properties`
+    async fn purge_server_properties(&self, bdata: Vec<u8>) -> Result<(), AstarteError> {
+        if let Some(db) = &self.database {
+            let interfaces = self.interfaces.read().await;
 
+            let stored_props = db.load_all_props().await?;
+>>>>>>> release-0.5
+
+<<<<<<< HEAD
         let paths = properties::extract_set_properties(bdata)?;
+||||||| d7f9c55
+            let paths = utils::extract_set_properties(&bdata);
+=======
+            let server_owned_properties = stored_props.into_iter().filter(|prop| {
+                interfaces.get_ownership(&prop.interface)
+                    == Some(crate::interface::Ownership::Server)
+            });
 
+            let paths = utils::extract_set_properties(&bdata);
+>>>>>>> release-0.5
+
+<<<<<<< HEAD
         for stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
+||||||| d7f9c55
+            for stored_prop in stored_props {
+                if paths.contains(&(stored_prop.interface.clone() + &stored_prop.path)) {
+                    continue;
+                }
+
+                db.delete_prop(&stored_prop.interface, &stored_prop.path)
+                    .await?;
+=======
+            for stored_prop in server_owned_properties {
+                if paths.contains(&(stored_prop.interface.clone() + &stored_prop.path)) {
+                    continue;
+                }
+
+                db.delete_prop(&stored_prop.interface, &stored_prop.path)
+                    .await?;
+>>>>>>> release-0.5
             }
 
             self.store
