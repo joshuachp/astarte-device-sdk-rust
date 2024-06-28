@@ -1,7 +1,7 @@
 /*
  * This file is part of Astarte.
  *
- * Copyright 2021 SECO Mind Srl
+ * Copyright 2021-2024 SECO Mind Srl
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ mod interfaces;
 pub mod introspection;
 pub mod prelude;
 pub mod properties;
+pub mod retention;
 mod retry;
 pub mod store;
 pub mod transport;

@@ -56,7 +56,7 @@ use crate::{
     },
     interfaces::{self, Interfaces, Introspection},
     properties,
-    store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoredProp},
+    store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, SqliteStore, StoredProp},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,

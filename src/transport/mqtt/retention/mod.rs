@@ -26,7 +26,6 @@
 //! payload will be publish on the new introspection.
 
 pub(crate) mod specialization;
-pub(crate) mod sqlite;
 
 use std::{
     array::TryFromSliceError,

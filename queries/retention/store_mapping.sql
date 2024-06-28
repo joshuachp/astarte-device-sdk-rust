@@ -1,6 +1,6 @@
 INSERT OR REPLACE INTO mapping_retention (
     topic,
     major_version,
-    qos,
+    reliability,
     expiry_sec
 ) VALUES (?, ?, ?, ?)

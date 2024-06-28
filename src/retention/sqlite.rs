@@ -18,22 +18,164 @@
 
 //! Retention implemented using an SQLite database.
 
-use std::time::Duration;
+use std::{
+    array::TryFromSliceError,
+    borrow::Cow,
+    fmt::Display,
+    time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
+};
 
-use async_trait::async_trait;
 use futures::TryStreamExt;
 use sqlx::{query_file, Sqlite, Transaction};
+use tracing::error;
 
-use crate::{interface::Reliability, store::SqliteStore};
+use crate::{error::Report, interface::Reliability, store::SqliteStore};
 
-use super::{Id, MappingPacket, MappingRetention, RetentionError, StoredPacket, StoredRetention};
+/// Error returned by the retention.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum SqliteRetentionError {
+    /// Couldn't get all the packets.
+    #[error("couldn't get all the packets")]
+    AllPackets(#[source] sqlx::Error),
+    /// Couldn't convert timestamp bytes
+    #[error("couldn't convert timestamp bytes")]
+    Timestamp(#[source] TryFromSliceError),
+    /// Reliability must not be at most once (0)
+    #[error("invalid reliability ({0})")]
+    Reliability(u8),
+    /// Couldn't store the mapping
+    #[error("couldn't store mapping {topic}")]
+    StoreMapping {
+        /// The source of the error
+        #[source]
+        backtrace: sqlx::Error,
+        /// Topic of the mapping
+        topic: String,
+    },
+    /// Couldn't store the publish
+    #[error("couldn't store publish for {path}")]
+    StorePublish {
+        /// The source of the error
+        #[source]
+        backtrace: sqlx::Error,
+        /// Topic of the mapping
+        path: String,
+    },
+    /// Couldn't fetch mapping
+    #[error("couldn't fetch mapping {path}")]
+    Mapping {
+        /// The source of the error
+        #[source]
+        backtrace: sqlx::Error,
+        /// Path of the packet
+        path: String,
+    },
+    /// Couldn't fetch publish
+    #[error("couldn't fetch publish {id}")]
+    Publish {
+        /// The source of the error
+        #[source]
+        backtrace: sqlx::Error,
+        /// Id of the publish
+        id: Id,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MappingRetention<'a> {
+    path: Cow<'a, str>,
+    version_major: i32,
+    reliability: Reliability,
+    expiry: Option<Duration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MappingPacket<'a> {
+    id: Id,
+    path: Cow<'a, str>,
+    payload: Cow<'a, [u8]>,
+}
+
+/// Id of a packet
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Id {
+    timestamp: u128,
+    counter: u32,
+}
+
+impl Id {
+    pub(crate) fn from_row(timestamp: &[u8], counter: u32) -> Result<Self, TryFromSliceError> {
+        let bytes = timestamp.try_into()?;
+        let timestamp = u128::from_be_bytes(bytes);
+
+        Ok(Self { timestamp, counter })
+    }
+
+    pub(crate) fn timestamp_as_bytes(&self) -> [u8; 16] {
+        self.timestamp.to_be_bytes()
+    }
+}
+
+impl Display for Id {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.timestamp, self.counter)
+    }
+}
+
+pub(crate) struct Context {
+    last_t: u128,
+    counter: u32,
+}
+
+impl Context {
+    fn new() -> Self {
+        Self {
+            last_t: 0,
+            counter: 0,
+        }
+    }
+
+    fn next(&mut self) -> Result<Id, SystemTimeError> {
+        let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(t) => t.as_millis(),
+            Err(err) => {
+                error!(error = %Report::new(&err), "untrasted system clock, time returned before unix epoch");
+
+                return Err(err);
+            }
+        };
+
+        // The clock is guarantied to be monotonic ascending.
+        let counter = if timestamp - self.last_t > 0 {
+            0
+        } else {
+            // If the ID overflows we insert the same primary key for the packet and throw an error.
+            self.counter.saturating_add(1)
+        };
+
+        self.last_t = timestamp;
+        self.counter = counter;
+
+        Ok(Id { timestamp, counter })
+    }
+}
+
+/// Data used to resend the stored packets.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct StoredPacket {
+    id: Id,
+    topic: String,
+    payload: Vec<u8>,
+    qos: Reliability,
+}
 
 /// Gets the [`Reliability`] from a stored [`u8`].
-fn reliability_from_row(qos: u8) -> Result<Reliability, RetentionError> {
+fn reliability_from_row(qos: u8) -> Option<Reliability> {
     match qos {
-        1 => Ok(Reliability::Guaranteed),
-        2 => Ok(Reliability::Unique),
-        qos => Err(RetentionError::Qos(qos)),
+        1 => Some(Reliability::Guaranteed),
+        2 => Some(Reliability::Unique),
+        _ => None,
     }
 }
 
@@ -43,15 +185,16 @@ impl SqliteStore {
     async fn all_packets(
         &self,
         transaction: &mut Transaction<'_, Sqlite>,
-    ) -> Result<Vec<StoredPacket>, RetentionError> {
+    ) -> Result<Vec<StoredPacket>, SqliteRetentionError> {
         query_file!("queries/retention/all_packets.sql")
             .fetch(&mut **transaction)
-            .map_err(RetentionError::AllPackets)
+            .map_err(SqliteRetentionError::AllPackets)
             .and_then(|row| async move {
-                let id =
-                    Id::from_row(&row.t_millis, row.counter).map_err(RetentionError::Timestamp)?;
+                let id = Id::from_row(&row.t_millis, row.counter)
+                    .map_err(SqliteRetentionError::Timestamp)?;
 
-                let qos = reliability_from_row(row.qos)?;
+                let qos = reliability_from_row(row.qos)
+                    .ok_or(SqliteRetentionError::Reliability(row.qos))?;
 
                 Ok(StoredPacket {
                     id,
@@ -63,13 +206,13 @@ impl SqliteStore {
             .try_collect()
             .await
     }
-}
 
-#[async_trait]
-impl StoredRetention for SqliteStore {
-    async fn store_mapping(&self, mapping: &MappingRetention<'_>) -> Result<(), RetentionError> {
-        let qos: u8 = match mapping.qos {
-            Reliability::Unreliable => return Err(RetentionError::Qos(0)),
+    async fn mapping_retention(
+        &self,
+        mapping: &MappingRetention<'_>,
+    ) -> Result<(), SqliteRetentionError> {
+        let qos: u8 = match mapping.reliability {
+            Reliability::Unreliable => return Err(SqliteRetentionError::Reliability(0)),
             Reliability::Guaranteed => 1,
             Reliability::Unique => 2,
         };
@@ -81,22 +224,22 @@ impl StoredRetention for SqliteStore {
 
         query_file!(
             "queries/retention/store_mapping.sql",
-            mapping.topic,
+            mapping.path,
             mapping.version_major,
             qos,
             exp
         )
         .execute(&self.db_conn)
         .await
-        .map_err(|err| RetentionError::StoreRetention {
+        .map_err(|err| SqliteRetentionError::StoreMapping {
             backtrace: err,
-            topic: mapping.topic.to_string(),
+            topic: mapping.path.to_string(),
         })?;
 
         Ok(())
     }
 
-    async fn store_packet(&self, packet: &MappingPacket<'_>) -> Result<(), RetentionError> {
+    async fn store_packet(&self, packet: &MappingPacket<'_>) -> Result<(), SqliteRetentionError> {
         let be_bytes = packet.id.timestamp.to_be_bytes();
         let timestamp = be_bytes.as_slice();
         let counter = packet.id.counter;
@@ -107,14 +250,14 @@ impl StoredRetention for SqliteStore {
             "queries/retention/store_packet.sql",
             timestamp,
             counter,
-            packet.topic,
+            packet.path,
             payload,
         )
         .execute(&self.db_conn)
         .await
-        .map_err(|err| RetentionError::StorePacket {
+        .map_err(|err| SqliteRetentionError::StoreMapping {
             backtrace: err,
-            topic: packet.topic.to_string(),
+            topic: packet.path.to_string(),
         })?;
 
         Ok(())
@@ -122,20 +265,21 @@ impl StoredRetention for SqliteStore {
 
     async fn mapping(
         &self,
-        topic: &str,
-    ) -> Result<Option<MappingRetention<'static>>, RetentionError> {
-        let Some(row) = query_file!("queries/retention/mapping.sql", topic)
+        path: &str,
+    ) -> Result<Option<MappingRetention<'static>>, SqliteRetentionError> {
+        let Some(row) = query_file!("queries/retention/mapping.sql", path)
             .fetch_optional(&self.db_conn)
             .await
-            .map_err(|err| RetentionError::Mapping {
+            .map_err(|err| SqliteRetentionError::Mapping {
                 backtrace: err,
-                topic: topic.to_string(),
+                path: path.to_string(),
             })?
         else {
             return Ok(None);
         };
 
-        let qos = reliability_from_row(row.qos)?;
+        let reliability =
+            reliability_from_row(row.qos).ok_or(SqliteRetentionError::Reliability(row.qos))?;
 
         let expiry = row.expiry_sec.and_then(|exp| {
             // If the conversion fails, let's keep the packet forever.
@@ -143,21 +287,24 @@ impl StoredRetention for SqliteStore {
         });
 
         Ok(Some(MappingRetention {
-            topic: row.topic.into(),
+            path: row.path.into(),
             version_major: row.major_version,
-            qos,
+            reliability,
             expiry,
         }))
     }
 
-    async fn packet(&self, id: &Id) -> Result<Option<MappingPacket<'static>>, RetentionError> {
+    async fn packet(
+        &self,
+        id: &Id,
+    ) -> Result<Option<MappingPacket<'static>>, SqliteRetentionError> {
         let timestamp = id.timestamp_as_bytes();
         let timestamp = timestamp.as_slice();
 
         let Some(row) = query_file!("queries/retention/packet.sql", timestamp, id.counter)
             .fetch_optional(&self.db_conn)
             .await
-            .map_err(|err| RetentionError::Packet {
+            .map_err(|err| SqliteRetentionError::Packet {
                 backtrace: err,
                 id: *id,
             })?
@@ -169,7 +316,7 @@ impl StoredRetention for SqliteStore {
 
         Ok(Some(MappingPacket {
             id,
-            topic: row.topic.into(),
+            path: row.topic.into(),
             payload: row.payload.into(),
         }))
     }
@@ -222,6 +369,20 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn should_be_unique_monotonic_ascending() {
+        let mut ctx = Context::new();
+
+        let mut prev = ctx.next().unwrap();
+        for _i in 0..100 {
+            let new = ctx.next().unwrap();
+
+            assert!(new > prev);
+
+            prev = new;
+        }
+    }
+
     #[tokio::test]
     async fn should_store_and_check_mapping() {
         let dir = tempfile::tempdir().unwrap();
@@ -229,14 +390,14 @@ mod tests {
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mapping = MappingRetention {
-            topic: "realm/device_id/com.Foo/bar".into(),
+            path: "realm/device_id/com.Foo/bar".into(),
             version_major: 1,
             qos: Reliability::Guaranteed,
             expiry: None,
         };
         store.store_mapping(&mapping).await.unwrap();
 
-        let res = store.mapping(&mapping.topic).await.unwrap().unwrap();
+        let res = store.mapping(&mapping.path).await.unwrap().unwrap();
 
         assert_eq!(res, mapping);
     }
@@ -248,14 +409,14 @@ mod tests {
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mut mapping = MappingRetention {
-            topic: "realm/device_id/com.Foo/bar".into(),
+            path: "realm/device_id/com.Foo/bar".into(),
             version_major: 1,
             qos: Reliability::Guaranteed,
             expiry: None,
         };
         store.store_mapping(&mapping).await.unwrap();
 
-        let res = store.mapping(&mapping.topic).await.unwrap().unwrap();
+        let res = store.mapping(&mapping.path).await.unwrap().unwrap();
 
         assert_eq!(res, mapping);
 
@@ -263,7 +424,7 @@ mod tests {
 
         store.store_mapping(&mapping).await.unwrap();
 
-        let res = store.mapping(&mapping.topic).await.unwrap().unwrap();
+        let res = store.mapping(&mapping.path).await.unwrap().unwrap();
 
         assert_eq!(res, mapping);
     }
@@ -275,14 +436,14 @@ mod tests {
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mut mapping = MappingRetention {
-            topic: "realm/device_id/com.Foo/bar".into(),
+            path: "realm/device_id/com.Foo/bar".into(),
             version_major: 1,
             qos: Reliability::Guaranteed,
             expiry: Some(Duration::from_secs(u64::MAX)),
         };
         store.store_mapping(&mapping).await.unwrap();
 
-        let res = store.mapping(&mapping.topic).await.unwrap().unwrap();
+        let res = store.mapping(&mapping.path).await.unwrap().unwrap();
 
         mapping.expiry = None;
 
@@ -310,7 +471,7 @@ mod tests {
         let topic = "realm/device_id/com.Foo/bar";
 
         let mapping = MappingRetention {
-            topic: topic.into(),
+            path: topic.into(),
             version_major: 1,
             qos: Reliability::Guaranteed,
             expiry: None,
@@ -322,7 +483,7 @@ mod tests {
                 timestamp: 1,
                 counter: 2,
             },
-            topic: topic.into(),
+            path: topic.into(),
             payload: [].as_slice().into(),
         };
         store.store_packet(&packet).await.unwrap();
@@ -341,7 +502,7 @@ mod tests {
         let topic = "realm/device_id/com.Foo/bar";
 
         let mapping = MappingRetention {
-            topic: topic.into(),
+            path: topic.into(),
             version_major: 1,
             qos: Reliability::Guaranteed,
             expiry: None,
@@ -354,7 +515,7 @@ mod tests {
         };
         let exp = MappingPacket {
             id,
-            topic: topic.into(),
+            path: topic.into(),
             payload: [].as_slice().into(),
         };
         store.store_packet(&exp).await.unwrap();
@@ -388,7 +549,7 @@ mod tests {
         let topic = "realm/device_id/com.Foo/bar";
 
         let mapping = MappingRetention {
-            topic: topic.into(),
+            path: topic.into(),
             version_major: 1,
             qos: Reliability::Guaranteed,
             expiry: None,
@@ -401,7 +562,7 @@ mod tests {
                     timestamp: 1,
                     counter: 2,
                 },
-                topic: topic.into(),
+                path: topic.into(),
                 payload: [].as_slice().into(),
             },
             MappingPacket {
@@ -409,7 +570,7 @@ mod tests {
                     timestamp: 2,
                     counter: 0,
                 },
-                topic: topic.into(),
+                path: topic.into(),
                 payload: [].as_slice().into(),
             },
             MappingPacket {
@@ -417,7 +578,7 @@ mod tests {
                     timestamp: 2,
                     counter: 1,
                 },
-                topic: topic.into(),
+                path: topic.into(),
                 payload: [].as_slice().into(),
             },
         ];
@@ -431,7 +592,7 @@ mod tests {
             .map(|p| StoredPacket {
                 qos: mapping.qos,
                 id: p.id,
-                topic: p.topic.to_string(),
+                topic: p.path.to_string(),
                 payload: p.payload.to_vec(),
             })
             .collect_vec();
@@ -452,7 +613,7 @@ mod tests {
         let topic = "realm/device_id/com.Foo/bar";
 
         let mapping = MappingRetention {
-            topic: topic.into(),
+            path: topic.into(),
             version_major: 1,
             qos: Reliability::Guaranteed,
             expiry: None,
@@ -465,7 +626,7 @@ mod tests {
                     timestamp: 1,
                     counter: 2,
                 },
-                topic: topic.into(),
+                path: topic.into(),
                 payload: [].as_slice().into(),
             },
             MappingPacket {
@@ -473,7 +634,7 @@ mod tests {
                     timestamp: 2,
                     counter: 0,
                 },
-                topic: topic.into(),
+                path: topic.into(),
                 payload: [].as_slice().into(),
             },
             MappingPacket {
@@ -481,7 +642,7 @@ mod tests {
                     timestamp: 2,
                     counter: 1,
                 },
-                topic: topic.into(),
+                path: topic.into(),
                 payload: [].as_slice().into(),
             },
         ];
@@ -495,7 +656,7 @@ mod tests {
             .map(|p| StoredPacket {
                 qos: mapping.qos,
                 id: p.id,
-                topic: p.topic.to_string(),
+                topic: p.path.to_string(),
                 payload: p.payload.to_vec(),
             })
             .collect_vec();
