@@ -15,7 +15,6 @@ homepage = { workspace = true }
 include = [
   "/.sqlx",
   "/LICENSES",
-  "/benches",
   "/examples",
   "/migrations",
   "/queries",
@@ -48,10 +47,6 @@ homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
 rust-version = "1.72.0"
-
-[[bench]]
-name = "benchmark"
-harness = false
 
 [dependencies]
 astarte-device-sdk-derive = { workspace = true, optional = true }
@@ -88,7 +83,6 @@ x509-cert = { workspace = true, features = ["builder"] }
 
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
-criterion = { workspace = true }
 env_logger = { workspace = true }
 mockall = { workspace = true }
 tempfile = { workspace = true }
