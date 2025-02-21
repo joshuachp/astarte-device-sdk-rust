@@ -1,0 +1,28 @@
+[package]
+name = "astarte-interfaces"
+version = "1.0.0-alpha.1"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+# Keeps the order of the mappings
+preserve_order = ["serde_json/preserve_order"]
+# Add description and doc fields to the interfaces
+doc-fields = []
+# TODO: add the server fields
+server-fileds = []
+# TODO: improve the strictness
+strict = []
+
+[dependencies]
+regex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
