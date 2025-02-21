@@ -20,78 +20,79 @@
 
 //! Provides the functionalities to parse and validate an Astarte interface.
 
-pub mod def;
-pub mod error;
-pub mod mapping;
+pub mod datastream;
+pub mod property;
 pub mod reference;
-pub(crate) mod validation;
+pub mod validation;
+pub mod version;
 
-use serde::{Deserialize, Serialize};
-use tracing::info;
-
-use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::str::FromStr;
 use std::time::Duration;
 
-pub(crate) use self::def::{
-    Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
-};
-use self::error::InterfaceError;
-use self::mapping::vec::Item;
-use self::mapping::InterfaceMapping;
-use self::reference::{MappingRef, ObjectRef, PropertyRef};
-use self::{
-    def::{DatabaseRetentionPolicyDef, InterfaceDef, RetentionDef},
-    mapping::{
-        iter::{IndividualMappingIter, MappingIter, ObjectMappingIter, PropertiesMappingIter},
-        path::MappingPath,
-        vec::MappingVec,
-        BaseMapping, DatastreamIndividualMapping, PropertiesMapping,
-    },
-    validation::VersionChange,
-};
+use serde::{Deserialize, Serialize};
+use tracing::info;
 
-/// Mapping between the endpoint and the path
-///
-/// The mappings are stored in a BTree so we can implement a custom compare of the endpoint which
-/// will make a placeholder equal to any level. The [HashSet](std::collections::HashSet) would not
-/// work since we cannot hash the placeholder to the same value as a simple level.
-///
-/// For example, if we have the following mappings:
-///
-/// - `/a/b/c`
-/// - `/a/%{p}/c`
-///
-/// They should be considered the same endpoint, but we cannot hash those to the same HashSet key,
-/// so we use a [`BTreeMap`] and implement a custom [`Ord`] for the [`MappingPath`]. Which is an enum to
-/// compare the parsed endpoint with parameters and the mapping path of a topic received from MQTT.
-///
-/// A mappings can be accessed by passing the endpoint to the [`Interface::mapping`] method.
-pub(crate) type MappingSet<T> = BTreeSet<Item<T>>;
+use self::datastream::individual::DatastreamIndividual;
+use self::validation::VersionChange;
+use self::version::InterfaceVersion;
+use crate::error::Error;
+use crate::mapping::InterfaceMapping;
+use crate::mapping::{collection::MappingVec, path::MappingPath};
+use crate::schema::InterfaceJson;
+use crate::schema::{Aggregation, InterfaceType, Mapping, Ownership, Reliability};
 
 /// Maximum number of mappings an interface can have
 ///
 /// See the [Astarte interface scheme](https://docs.astarte-platform.org/latest/040-interface_schema.html#astarte-interface-schema-mappings)
 pub const MAX_INTERFACE_MAPPINGS: usize = 1024;
 
+pub trait Introspection {
+    type Mapping: Sized;
+
+    /// Returns the interface name.
+    fn interface_name(&self) -> &str;
+    /// Returns the interface major version.
+    fn version_major(&self) -> i32;
+    /// Returns the interface minor version.
+    fn version_minor(&self) -> i32;
+    /// Returns the interface version.
+    fn version(&self) -> InterfaceVersion;
+    /// Returns the interface type.
+    fn interface_type(&self) -> InterfaceType;
+    /// Returns the interface ownership.
+    fn ownership(&self) -> Ownership;
+    /// Returns the interface aggregation.
+    fn aggregation(&self) -> Aggregation;
+
+    #[cfg(feature = "interface-doc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
+    /// Returns the interface description
+    fn description(&self) -> Option<&str>;
+    #[cfg(feature = "interface-doc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
+    /// Returns the interface documentation.
+    fn doc(&self) -> Option<&str>;
+
+    /// Returns an iterator over the interface's mappings.
+    fn iter_mappings(&self) -> impl Iterator<Item = &Self::Mapping>;
+
+    fn mapping(&self, path: &MappingPath) -> Option<&Self::Mapping>;
+
+    /// Returns the number of Mappings in the interface.
+    fn mappings_len(&self) -> usize;
+}
+
 /// Astarte interface implementation.
 ///
-/// Should be used only through its methods, not instantiated directly.
-#[derive(Deserialize, Debug, PartialEq, Eq, Clone)]
-#[serde(try_from = "InterfaceDef<std::borrow::Cow<str>>")]
+/// Should be used only through its conversion methods, not instantiated directly.
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize)]
+#[serde(try_from = "InterfaceJson<std::borrow::Cow<str>>")]
 pub struct Interface {
     interface_name: String,
-    version_major: i32,
-    version_minor: i32,
+    version: InterfaceVersion,
     ownership: Ownership,
-    #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
-    description: Option<String>,
-    #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
-    doc: Option<String>,
-    pub(crate) inner: InterfaceType,
+    inner: InterfaceTypeAggregation,
 }
 
 impl Interface {
@@ -102,26 +103,25 @@ impl Interface {
 
     /// Returns the interface major version.
     pub fn version_major(&self) -> i32 {
-        self.version_major
+        self.version.version_major()
     }
 
     /// Returns the interface minor version.
     pub fn version_minor(&self) -> i32 {
-        self.version_minor
+        self.version.version_minor()
     }
 
     /// Returns the interface version.
-    fn version(&self) -> (i32, i32) {
-        (self.version_major, self.version_minor)
+    fn version(&self) -> InterfaceVersion {
+        self.version
     }
 
     /// Returns the interface type.
-    pub fn interface_type(&self) -> InterfaceTypeDef {
+    pub fn interface_type(&self) -> InterfaceType {
         match &self.inner {
-            InterfaceType::DatastreamIndividual(_) | InterfaceType::DatastreamObject(_) => {
-                InterfaceTypeDef::Datastream
-            }
-            InterfaceType::Properties(_) => InterfaceTypeDef::Properties,
+            InterfaceTypeAggregation::DatastreamIndividual(_)
+            | InterfaceTypeAggregation::DatastreamObject(_) => InterfaceType::Datastream,
+            InterfaceTypeAggregation::Properties(_) => InterfaceType::Properties,
         }
     }
 
@@ -133,10 +133,9 @@ impl Interface {
     /// Returns the interface aggregation.
     pub fn aggregation(&self) -> Aggregation {
         match &self.inner {
-            InterfaceType::Properties(_) | InterfaceType::DatastreamIndividual(_) => {
-                Aggregation::Individual
-            }
-            InterfaceType::DatastreamObject(_) => Aggregation::Object,
+            InterfaceTypeAggregation::Properties(_)
+            | InterfaceTypeAggregation::DatastreamIndividual(_) => Aggregation::Individual,
+            InterfaceTypeAggregation::DatastreamObject(_) => Aggregation::Object,
         }
     }
 
@@ -161,61 +160,29 @@ impl Interface {
 
     pub(crate) fn mapping(&self, path: &MappingPath) -> Option<Mapping<&str>> {
         match &self.inner {
-            InterfaceType::DatastreamIndividual(individual) => individual.mapping(path),
-            InterfaceType::DatastreamObject(object) => object.mapping(path),
-            InterfaceType::Properties(properties) => properties.mapping(path),
+            InterfaceTypeAggregation::DatastreamIndividual(individual) => individual.mapping(path),
+            InterfaceTypeAggregation::DatastreamObject(object) => object.mapping(path),
+            InterfaceTypeAggregation::Properties(properties) => properties.mapping(path),
         }
     }
 
     /// Returns the number of Mappings in the interface.
     pub fn mappings_len(&self) -> usize {
         match &self.inner {
-            InterfaceType::DatastreamIndividual(datastream) => datastream.mappings.len(),
-            InterfaceType::DatastreamObject(datastream) => datastream.mappings.len(),
-            InterfaceType::Properties(properties) => properties.mappings.len(),
+            InterfaceTypeAggregation::DatastreamIndividual(datastream) => datastream.mappings.len(),
+            InterfaceTypeAggregation::DatastreamObject(datastream) => datastream.mappings.len(),
+            InterfaceTypeAggregation::Properties(properties) => properties.mappings.len(),
         }
-    }
-
-    /// Get a [`MappingRef`] reference of the path if the endpoint is present in the interface.
-    pub(crate) fn as_mapping_ref<'a>(
-        &'a self,
-        path: &'a MappingPath,
-    ) -> Option<MappingRef<'a, &'a Interface>> {
-        MappingRef::new(self, path)
-    }
-
-    /// Check if the interface is a property.
-    pub fn is_property(&self) -> bool {
-        matches!(self.inner, InterfaceType::Properties(_))
-    }
-
-    /// Returns a [`PropertyRef`] if the interface is a property.
-    pub(crate) fn as_prop_ref(&self) -> Option<PropertyRef> {
-        self.is_property().then_some(PropertyRef(self))
-    }
-
-    /// Check if the interface is an object.
-    pub fn is_object(&self) -> bool {
-        matches!(self.inner, InterfaceType::DatastreamObject(_))
-    }
-
-    /// Returns a [`ObjectRef`] if the interface is an object.
-    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef> {
-        ObjectRef::new(self)
     }
 
     /// Validate if an interface is valid
-    pub fn validate(&self) -> Result<(), InterfaceError> {
-        if self.version() == (0, 0) {
-            return Err(InterfaceError::MajorMinor);
-        }
-
+    fn validate(&self) -> Result<(), Error> {
         if self.mappings_len() == 0 {
-            return Err(InterfaceError::EmptyMappings);
+            return Err(Error::EmptyMappings);
         }
 
         if self.mappings_len() > MAX_INTERFACE_MAPPINGS {
-            return Err(InterfaceError::TooManyMappings(self.mappings_len()));
+            return Err(Error::TooManyMappings(self.mappings_len()));
         }
 
         Ok(())
@@ -228,7 +195,7 @@ impl Interface {
     /// - Both the versions are valid
     /// - The name of the interface is the same
     /// - The new version is a valid successor of the previous version.
-    pub fn validate_with(&self, prev: &Self) -> Result<&Self, InterfaceError> {
+    pub fn validate_with(&self, prev: &Self) -> Result<&Self, Error> {
         // If the interfaces are the same, they are valid
         if self == prev {
             return Ok(self);
@@ -238,7 +205,7 @@ impl Interface {
         let name = self.interface_name();
         let prev_name = prev.interface_name();
         if name != prev_name {
-            return Err(InterfaceError::NameMismatch {
+            return Err(Error::NameMismatch {
                 name: name.to_string(),
                 prev_name: prev_name.to_string(),
             });
@@ -246,48 +213,25 @@ impl Interface {
 
         // Validate the new interface version
         VersionChange::try_new(self, prev)
-            .map_err(InterfaceError::Version)
+            .map_err(Error::VersionChange)
             .map(|change| {
                 info!("Interface {} version changed: {}", name, change);
 
                 self
             })
     }
-
-    /// Returns a typed reference to a property, only if the interface is of type
-    /// [`InterfaceTypeDef::Properties`].
-    pub fn as_prop(&self) -> Option<PropertyRef> {
-        match self.inner {
-            InterfaceType::DatastreamIndividual(_) | InterfaceType::DatastreamObject(_) => None,
-            InterfaceType::Properties(_) => Some(PropertyRef(self)),
-        }
-    }
-
-    /// Returns a reference to the specific interface type.
-    ///
-    /// See the documentation on [`InterfaceType`] for more information.
-    pub fn as_inner(&self) -> &InterfaceType {
-        &self.inner
-    }
-
-    /// Returns the specific interface type.
-    ///
-    /// See the documentation on [`InterfaceType`] for more information.
-    pub fn into_inner(self) -> InterfaceType {
-        self.inner
-    }
 }
 
 impl Serialize for Interface {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let interface_def = InterfaceDef::from(self);
+        let interface_def = InterfaceJson::from(self);
 
         interface_def.serialize(serializer)
     }
 }
 
 impl FromStr for Interface {
-    type Err = InterfaceError;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         serde_json::from_str(s).map_err(Self::Err::from)
@@ -296,20 +240,16 @@ impl FromStr for Interface {
 
 impl Display for Interface {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}:{}",
-            self.interface_name, self.version_major, self.version_minor
-        )
+        write!(f, "{}:{}", self.interface_name, self.version)
     }
 }
 
-/// Enum of all the types of interfaces
+/// Enum of all the types and aggregation of interfaces
 ///
 /// This is not a direct representation of only the mapping to permit extensibility of specific
 /// properties present only in some aggregations.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum InterfaceType {
+pub enum InterfaceTypeAggregation {
     /// Interface with type datastream and aggregations individual.
     DatastreamIndividual(DatastreamIndividual),
     /// Interface with type datastream and aggregations object.
@@ -318,7 +258,7 @@ pub enum InterfaceType {
     Properties(Properties),
 }
 
-impl InterfaceType {
+impl InterfaceTypeAggregation {
     /// Return a reference to a [`DatastreamIndividual`].
     pub fn as_datastream_individual(&self) -> Option<&DatastreamIndividual> {
         if let Self::DatastreamIndividual(v) = self {
@@ -371,83 +311,6 @@ impl InterfaceType {
     }
 }
 
-/// Interface of type datastream individual.
-///
-/// For this interface all the mappings have distinct configurations.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct DatastreamIndividual {
-    mappings: MappingVec<DatastreamIndividualMapping>,
-}
-
-impl DatastreamIndividual {
-    /// Returns an iterator over the interface mappings.
-    pub fn iter_mappings(&self) -> IndividualMappingIter {
-        IndividualMappingIter::new(&self.mappings)
-    }
-
-    pub(crate) fn add_mapping<T>(
-        tree: &mut MappingSet<DatastreamIndividualMapping>,
-        mapping: &Mapping<T>,
-    ) -> Result<(), InterfaceError>
-    where
-        T: AsRef<str> + Into<String>,
-    {
-        let individual = Item::new(DatastreamIndividualMapping::try_from(mapping)?);
-
-        if let Some(existing) = tree.get(&individual) {
-            return Err(InterfaceError::DuplicateMapping {
-                endpoint: existing.endpoint().to_string(),
-                duplicate: mapping.endpoint().as_ref().into(),
-            });
-        }
-
-        tree.insert(individual);
-
-        Ok(())
-    }
-}
-
-impl MappingAccess for DatastreamIndividual {
-    type Mapping = DatastreamIndividualMapping;
-
-    fn get(&self, path: &MappingPath) -> Option<&Self::Mapping> {
-        self.mappings.get(path)
-    }
-
-    fn len(&self) -> usize {
-        self.mappings.len()
-    }
-}
-
-impl<'a> IntoIterator for &'a DatastreamIndividual {
-    type Item = Mapping<&'a str>;
-
-    type IntoIter = IndividualMappingIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter_mappings()
-    }
-}
-
-impl<T> TryFrom<&InterfaceDef<T>> for DatastreamIndividual
-where
-    T: AsRef<str> + Into<String>,
-{
-    type Error = InterfaceError;
-
-    fn try_from(value: &InterfaceDef<T>) -> Result<Self, Self::Error> {
-        let mut btree = MappingSet::new();
-
-        for mapping in value.mappings.iter() {
-            Self::add_mapping(&mut btree, mapping)?;
-        }
-
-        Ok(Self {
-            mappings: MappingVec::from(btree),
-        })
-    }
-}
-
 /// Interface of type datastream object.
 ///
 /// For this interface all the mappings have the same prefix and configurations.
@@ -494,12 +357,12 @@ impl DatastreamObject {
         &self,
         btree: &mut MappingSet<BaseMapping>,
         mapping: &Mapping<T>,
-    ) -> Result<(), InterfaceError>
+    ) -> Result<(), Error>
     where
         T: AsRef<str> + Into<String>,
     {
         if !self.is_compatible(mapping) {
-            return Err(InterfaceError::InconsistentMapping);
+            return Err(Error::InconsistentMapping);
         }
 
         let mapping = Item::new(BaseMapping::try_from(mapping)?);
@@ -507,7 +370,7 @@ impl DatastreamObject {
         // Check that the mapping has at least two components
         // https://docs.astarte-platform.org/astarte/latest/030-interface.html#endpoints-and-aggregation
         if mapping.endpoint().len() < 2 {
-            return Err(InterfaceError::ObjectEndpointTooShort(
+            return Err(Error::ObjectEndpointTooShort(
                 mapping.endpoint().to_string(),
             ));
         }
@@ -516,13 +379,13 @@ impl DatastreamObject {
         if let Some(entry) = self.mappings.iter().next() {
             // Check that the mapping has the same endpoint as the other mappings
             if !entry.endpoint().is_same_object(mapping.endpoint()) {
-                return Err(InterfaceError::InconsistentEndpoints);
+                return Err(Error::InconsistentEndpoints);
             }
         }
 
         // Check that the mapping is not already present
         if let Some(existing) = btree.get(&mapping) {
-            return Err(InterfaceError::DuplicateMapping {
+            return Err(Error::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
                 duplicate: mapping.endpoint().to_string(),
             });
@@ -575,17 +438,17 @@ impl<'a> IntoIterator for &'a DatastreamObject {
     }
 }
 
-impl<T> TryFrom<&InterfaceDef<T>> for DatastreamObject
+impl<T> TryFrom<&InterfaceJson<T>> for DatastreamObject
 where
     T: AsRef<str> + Into<String>,
 {
-    type Error = InterfaceError;
+    type Error = Error;
 
-    fn try_from(value: &InterfaceDef<T>) -> Result<Self, Self::Error> {
+    fn try_from(value: &InterfaceJson<T>) -> Result<Self, Self::Error> {
         let mut mappings_iter = value.mappings.iter();
         let mut btree = MappingSet::new();
 
-        let first = mappings_iter.next().ok_or(InterfaceError::EmptyMappings)?;
+        let first = mappings_iter.next().ok_or(Error::EmptyMappings)?;
         let first_base = BaseMapping::try_from(first)?;
 
         btree.insert(Item::new(first_base));
@@ -627,14 +490,14 @@ impl Properties {
     pub(crate) fn add_mapping<T>(
         btree: &mut MappingSet<PropertiesMapping>,
         mapping: &Mapping<T>,
-    ) -> Result<(), InterfaceError>
+    ) -> Result<(), Error>
     where
         T: AsRef<str> + Into<String>,
     {
         let property = Item::new(PropertiesMapping::try_from(mapping)?);
 
         if let Some(existing) = btree.get(&property) {
-            return Err(InterfaceError::DuplicateMapping {
+            return Err(Error::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
                 duplicate: mapping.endpoint().as_ref().into(),
             });
@@ -668,13 +531,13 @@ impl<'a> IntoIterator for &'a Properties {
     }
 }
 
-impl<T> TryFrom<&InterfaceDef<T>> for Properties
+impl<T> TryFrom<&InterfaceJson<T>> for Properties
 where
     T: AsRef<str> + Into<String>,
 {
-    type Error = InterfaceError;
+    type Error = Error;
 
-    fn try_from(value: &InterfaceDef<T>) -> Result<Self, Self::Error> {
+    fn try_from(value: &InterfaceJson<T>) -> Result<Self, Self::Error> {
         let mut btree = MappingSet::new();
 
         for mapping in value.mappings.iter() {
@@ -714,14 +577,14 @@ pub enum Retention {
 }
 
 impl Retention {
-    pub(self) fn apply<T>(&self, mapping: &mut Mapping<T>) {
+    pub(crate) fn apply<T>(&self, mapping: &mut Mapping<T>) {
         match self {
             Retention::Discard => {
-                mapping.retention = RetentionDef::Discard;
+                mapping.retention = Retention::Discard;
                 mapping.expiry = 0;
             }
             Retention::Volatile { expiry } => {
-                mapping.retention = RetentionDef::Volatile;
+                mapping.retention = Retention::Volatile;
                 // This will never error since it will error while deserializing the interface.
                 // However astarte can handle bigger integers than i64, so a conservative move is to
                 // have an expiry of i64::MAX.
@@ -730,7 +593,7 @@ impl Retention {
                     .unwrap_or(0);
             }
             Retention::Stored { expiry } => {
-                mapping.retention = RetentionDef::Stored;
+                mapping.retention = Retention::Stored;
                 mapping.expiry = expiry
                     .map(|t| t.as_secs().try_into().unwrap_or(i64::MAX))
                     .unwrap_or(0);
@@ -800,7 +663,7 @@ pub enum DatabaseRetention {
 }
 
 impl DatabaseRetention {
-    pub(self) fn apply<T>(&self, mapping: &mut Mapping<T>) {
+    pub(crate) fn apply<T>(&self, mapping: &mut Mapping<T>) {
         match self {
             DatabaseRetention::NoTtl => {
                 mapping.database_retention_policy = DatabaseRetentionPolicyDef::NoTtl;
@@ -852,14 +715,15 @@ mod tests {
 
     use crate::{
         interface::{
-            def::{DatabaseRetentionPolicyDef, RetentionDef},
-            mapping::{
-                path::MappingPath,
-                vec::{Item, MappingVec},
-                BaseMapping, DatastreamIndividualMapping,
-            },
-            Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
-            Mapping, MappingAccess, MappingSet, MappingType, Ownership, Reliability, Retention,
+            def::{DatabaseRetentionPolicyDef, MappingType, RetentionDef},
+            Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType,
+            InterfaceTypeAggregation, Mapping, MappingAccess, MappingSet, Ownership, Reliability,
+            Retention,
+        },
+        mapping::{
+            path::MappingPath,
+            vec::{Item, MappingVec},
+            BaseMapping, DatastreamIndividualMapping,
         },
         test::{E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY},
         Interface,
@@ -997,7 +861,7 @@ mod tests {
             description,
             #[cfg(feature = "interface-doc")]
             doc,
-            inner: InterfaceType::DatastreamIndividual(datastream_individual),
+            inner: InterfaceTypeAggregation::DatastreamIndividual(datastream_individual),
         };
 
         let deser_interface = Interface::from_str(INTERFACE_JSON).unwrap();
@@ -1114,7 +978,7 @@ mod tests {
         #[cfg(feature = "interface-doc")]
         assert_eq!(interface.description(), Some("Interface description"));
         assert_eq!(interface.aggregation(), Aggregation::Individual);
-        assert_eq!(interface.interface_type(), InterfaceTypeDef::Datastream);
+        assert_eq!(interface.interface_type(), InterfaceType::Datastream);
         #[cfg(feature = "interface-doc")]
         assert_eq!(interface.doc(), Some("Interface doc"));
     }

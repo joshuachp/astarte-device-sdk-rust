@@ -33,7 +33,7 @@ use crate::{
     Interface,
 };
 
-use super::{DatabaseRetention, InterfaceError, InterfaceType, Retention};
+use super::{DatabaseRetention, Error, Retention, TypeAggregation};
 
 /// Utility to skip default value
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -63,28 +63,28 @@ fn is_zero(value: &i64) -> bool {
 ///   the value is [`None`].
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 #[cfg_attr(feature = "interface-strict", serde(deny_unknown_fields))]
-pub(super) struct InterfaceDef<T> {
-    pub(super) interface_name: T,
-    pub(super) version_major: i32,
-    pub(super) version_minor: i32,
+pub struct InterfaceJson<T> {
+    pub interface_name: T,
+    pub version_major: i32,
+    pub version_minor: i32,
     #[serde(rename = "type")]
-    pub(super) interface_type: InterfaceTypeDef,
-    pub(super) ownership: Ownership,
+    pub interface_type: InterfaceType,
+    pub ownership: Ownership,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub(super) aggregation: Aggregation,
+    pub aggregation: Aggregation,
     #[cfg(not(feature = "interface-doc"))]
     #[serde(default, skip_serializing, deserialize_with = "doc::deserialize_doc")]
-    pub(super) description: (),
+    pub(crate) description: (),
     #[cfg(not(feature = "interface-doc"))]
     #[serde(default, skip_serializing, deserialize_with = "doc::deserialize_doc")]
-    pub(super) doc: (),
+    pub(crate) doc: (),
     #[cfg(feature = "interface-doc")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) description: Option<T>,
+    pub description: Option<T>,
     #[cfg(feature = "interface-doc")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) doc: Option<T>,
-    pub(super) mappings: Vec<Mapping<T>>,
+    pub doc: Option<T>,
+    pub mappings: Vec<Mapping<T>>,
 }
 
 /// Mapping of an Interface.
@@ -104,46 +104,90 @@ pub(super) struct InterfaceDef<T> {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(feature = "interface-strict", serde(deny_unknown_fields))]
 pub struct Mapping<T> {
-    pub(super) endpoint: T,
+    /// Path of the mapping.
+    ///
+    /// It can be parametrized (e.g. `/foo/%{path}/baz`).
+    pub endpoint: T,
+    // Defines the type of the mapping.
+    //
+    // This represent the data that will be published on the mapping.
     #[serde(rename = "type")]
-    pub(super) mapping_type: MappingType,
+    pub mapping_type: MappingType,
+    /// Defines when to consider the data delivered.
+    ///
+    /// Useful only with datastream. Defines whether the sent data should be considered delivered
+    /// when the transport successfully sends the data (unreliable), when we know that the data has
+    /// been received at least once (guaranteed) or when we know that the data has been received
+    /// exactly once (unique). Unreliable by default. When using reliable data, consider you might
+    /// incur in additional resource usage on both the transport and the device's end.
     #[serde(default, skip_serializing_if = "is_default")]
-    pub(super) reliability: Reliability,
+    pub reliability: Reliability,
+    // Retention of the data when not deliverable.
+    //
+    // Useful only with datastream. Defines whether the sent data should be discarded if the
+    // transport is temporarily uncapable of delivering it (discard) or should be kept in a cache in
+    // memory (volatile) or on disk (stored), and guaranteed to be delivered in the timeframe
+    // defined by the expiry.
     #[serde(default, skip_serializing_if = "is_default")]
-    pub(super) retention: RetentionDef,
+    pub retention: Retention,
+    /// Expiry for the retain data.
+    ///
+    /// Useful when retention is stored. Defines after how many seconds a specific data entry should
+    /// be kept before giving up and erasing it from the persistent cache. A value <= 0 means the
+    /// persistent cache never expires, and is the default.	No, default: 0Useful when retention is
+    /// stored. Defines after how many seconds a specific data entry should be kept before giving up
+    /// and erasing it from the persistent cache. A value <= 0 means the persistent cache never
+    /// expires, and is the default.
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub(super) expiry: i64,
+    pub expiry: i64,
+    // Retention policy for the database.
+    //
+    // Useful only with datastream. Defines whether data should expire from the database after a
+    // given interval. Valid values are: no_ttl and use_ttl.
     #[serde(default, skip_serializing_if = "is_default")]
-    pub(super) database_retention_policy: DatabaseRetentionPolicyDef,
+    pub database_retention_policy: DatabaseRetentionPolicy,
+    // Seconds to keep the data in the database.
+    //
+    // Useful when database_retention_policy is "use_ttl". Defines how many seconds a specific data
+    // entry should be kept before erasing it from the database.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) database_retention_ttl: Option<i64>,
+    pub database_retention_ttl: Option<i64>,
+    /// Allows the property to be unset.
+    ///
+    /// Used only with properties.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub(super) allow_unset: bool,
+    pub allow_unset: bool,
+    /// Allow to set a custom timestamp.
+    ///
+    /// Otherwise a timestamp is added when the message is received. If true explicit timestamp will
+    /// also be used for sorting. This feature is only supported on datastreams.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub(super) explicit_timestamp: bool,
+    pub explicit_timestamp: bool,
     #[cfg(not(feature = "interface-doc"))]
     #[serde(default, skip_serializing, deserialize_with = "doc::deserialize_doc")]
-    pub(super) description: (),
+    pub(crate) description: (),
     #[cfg(not(feature = "interface-doc"))]
     #[serde(default, skip_serializing, deserialize_with = "doc::deserialize_doc")]
-    pub(super) doc: (),
+    pub(crate) doc: (),
+    /// An optional description of the mapping.
     #[cfg(feature = "interface-doc")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) description: Option<T>,
+    pub description: Option<T>,
+    /// A string containing documentation that will be injected in the generated client code.
     #[cfg(feature = "interface-doc")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) doc: Option<T>,
+    pub doc: Option<T>,
 }
 
 impl<T> Mapping<T> {
-    pub(super) fn new(endpoint: T, mapping_type: MappingType) -> Self {
+    pub(crate) fn new(endpoint: T, mapping_type: MappingType) -> Self {
         Mapping {
             endpoint,
             mapping_type,
             reliability: Reliability::default(),
-            retention: RetentionDef::default(),
+            retention: Retention::default(),
             expiry: 0,
-            database_retention_policy: DatabaseRetentionPolicyDef::default(),
+            database_retention_policy: DatabaseRetentionPolicy::default(),
             database_retention_ttl: None,
             allow_unset: false,
             explicit_timestamp: false,
@@ -166,59 +210,30 @@ impl<T> Mapping<T> {
         self
     }
 
-    /// Path of the mapping.
-    ///
-    /// It can be parametrized (e.g. `/foo/%{path}/baz`).
-    pub fn endpoint(&self) -> &T {
-        &self.endpoint
-    }
-
-    /// Returns the mapping's type.
-    pub fn mapping_type(&self) -> MappingType {
-        self.mapping_type
-    }
-
-    /// Reliability of the data stream.
-    ///
-    /// See the [`Reliability`] documentation for more information.
-    pub fn reliability(&self) -> Reliability {
-        self.reliability
-    }
-
     /// Expiry of the data stream.
     ///
     /// If it's [`None`] the stream will never expire.
-    pub fn expiry(&self) -> Option<Duration> {
-        match &self.expiry {
-            ..=0 => None,
-            1.. => Some(Duration::from_secs(self.expiry as u64)),
-        }
-    }
-
-    /// Expiry of the data stream.
-    ///
-    /// If it's [`None`] the stream will never expire.
-    pub fn expiry_as_i64(&self) -> i64 {
-        self.expiry
+    pub fn expiry_as_duration(&self) -> Option<Duration> {
+        u64::try_from(self.expiry).ok().map(Duration::from_secs)
     }
 
     /// Retention of the data stream.
     ///
     /// See the [`Retention`] documentation for more information.
-    pub fn retention(&self) -> Retention {
+    pub fn retention_with_expiry(&self) -> crate::interface::Retention {
         match self.retention {
-            RetentionDef::Discard => {
+            Retention::Discard => {
                 if self.expiry > 0 {
                     warn!("Discard retention policy with expiry set, ignoring expiry");
                 }
 
-                Retention::Discard
+                crate::interface::Retention::Discard
             }
-            RetentionDef::Volatile => Retention::Volatile {
-                expiry: self.expiry(),
+            Retention::Volatile => crate::interface::Retention::Volatile {
+                expiry: self.expiry_as_duration(),
             },
-            RetentionDef::Stored => Retention::Stored {
-                expiry: self.expiry(),
+            Retention::Stored => crate::interface::Retention::Stored {
+                expiry: self.expiry_as_duration(),
             },
         }
     }
@@ -226,16 +241,16 @@ impl<T> Mapping<T> {
     /// Returns the database retention of the data stream.
     ///
     /// See the [`DatabaseRetention`] for more information.
-    pub fn database_retention(&self) -> DatabaseRetention {
+    pub fn database_retention_with_ttl(&self) -> DatabaseRetention {
         match self.database_retention_policy {
-            DatabaseRetentionPolicyDef::NoTtl => {
+            DatabaseRetentionPolicy::NoTtl => {
                 if self.database_retention_ttl.is_some() {
                     warn!("no_ttl retention policy with ttl set, ignoring ttl");
                 }
 
                 DatabaseRetention::NoTtl
             }
-            DatabaseRetentionPolicyDef::UseTtl => {
+            DatabaseRetentionPolicy::UseTtl => {
                 if self.database_retention_ttl.is_none() {
                     warn!("use_ttl retention policy without ttl set, using 0 as ttl");
                 }
@@ -257,35 +272,11 @@ impl<T> Mapping<T> {
             }
         }
     }
-
-    /// Returns whether the property's mapping can be unset.
-    pub fn allow_unset(&self) -> bool {
-        self.allow_unset
-    }
-
-    /// Returns whether the mapping should be sent with an explicit time stamp.
-    pub fn explicit_timestamp(&self) -> bool {
-        self.explicit_timestamp
-    }
-
-    #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
-    /// Returns the mapping's description.
-    pub fn description(&self) -> Option<&T> {
-        self.description.as_ref()
-    }
-
-    #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
-    /// Returns the mapping's documentation.
-    pub fn doc(&self) -> Option<&T> {
-        self.doc.as_ref()
-    }
 }
 
-impl<'a> From<&'a Interface> for InterfaceDef<&'a str> {
+impl<'a> From<&'a Interface> for InterfaceJson<&'a str> {
     fn from(value: &'a Interface) -> Self {
-        InterfaceDef {
+        InterfaceJson {
             interface_name: value.interface_name(),
             version_major: value.version_major(),
             version_minor: value.version_minor(),
@@ -305,23 +296,23 @@ impl<'a> From<&'a Interface> for InterfaceDef<&'a str> {
     }
 }
 
-impl<T> TryFrom<InterfaceDef<T>> for Interface
+impl<T> TryFrom<InterfaceJson<T>> for Interface
 where
     T: AsRef<str> + Into<String>,
 {
-    type Error = InterfaceError;
+    type Error = Error;
 
-    fn try_from(def: InterfaceDef<T>) -> Result<Self, Self::Error> {
+    fn try_from(def: InterfaceJson<T>) -> Result<Self, Self::Error> {
         let inner = match def.interface_type {
-            InterfaceTypeDef::Datastream => match def.aggregation {
+            InterfaceType::Datastream => match def.aggregation {
                 Aggregation::Individual => {
-                    InterfaceType::DatastreamIndividual(DatastreamIndividual::try_from(&def)?)
+                    TypeAggregation::DatastreamIndividual(DatastreamIndividual::try_from(&def)?)
                 }
                 Aggregation::Object => {
-                    InterfaceType::DatastreamObject(DatastreamObject::try_from(&def)?)
+                    TypeAggregation::DatastreamObject(DatastreamObject::try_from(&def)?)
                 }
             },
-            InterfaceTypeDef::Properties => InterfaceType::Properties(Properties::try_from(&def)?),
+            InterfaceType::Properties => TypeAggregation::Properties(Properties::try_from(&def)?),
         };
 
         let interface = Interface {
@@ -348,18 +339,18 @@ where
 /// for more information.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
-pub enum InterfaceTypeDef {
+pub enum InterfaceType {
     /// Stream of non persistent data.
     Datastream,
     /// Stateful value.
     Properties,
 }
 
-impl Display for InterfaceTypeDef {
+impl Display for InterfaceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InterfaceTypeDef::Datastream => write!(f, "datastream"),
-            InterfaceTypeDef::Properties => write!(f, "properties"),
+            InterfaceType::Datastream => write!(f, "datastream"),
+            InterfaceType::Properties => write!(f, "properties"),
         }
     }
 }
@@ -532,7 +523,7 @@ impl From<Reliability> for QoS {
 /// for more information.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone, Default)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum RetentionDef {
+pub enum Retention {
     /// Data is discarded.
     #[default]
     Discard,
@@ -544,7 +535,7 @@ pub(super) enum RetentionDef {
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Copy, Clone, Default)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum DatabaseRetentionPolicyDef {
+pub enum DatabaseRetentionPolicy {
     #[default]
     NoTtl,
     UseTtl,
@@ -608,7 +599,7 @@ mod tests {
             }]
         }"#;
 
-        serde_json::from_str::<InterfaceDef<String>>(json)
+        serde_json::from_str::<InterfaceJson<String>>(json)
             .expect_err("should error for misspelled fields");
     }
 
@@ -631,28 +622,28 @@ mod tests {
             )
         };
 
-        let i = serde_json::from_str::<InterfaceDef<String>>(&json(10)).unwrap();
+        let i = serde_json::from_str::<InterfaceJson<String>>(&json(10)).unwrap();
 
         let mapping = i.mappings.first().unwrap();
 
         assert_eq!(mapping.expiry_as_i64(), 10);
         assert_eq!(mapping.expiry(), Some(Duration::from_secs(10)));
 
-        let i = serde_json::from_str::<InterfaceDef<String>>(&json(-42)).unwrap();
+        let i = serde_json::from_str::<InterfaceJson<String>>(&json(-42)).unwrap();
 
         let mapping = i.mappings.first().unwrap();
 
         assert_eq!(mapping.expiry_as_i64(), -42);
         assert_eq!(mapping.expiry(), None);
 
-        let i = serde_json::from_str::<InterfaceDef<String>>(&json(0)).unwrap();
+        let i = serde_json::from_str::<InterfaceJson<String>>(&json(0)).unwrap();
 
         let mapping = i.mappings.first().unwrap();
 
         assert_eq!(mapping.expiry_as_i64(), 0);
         assert_eq!(mapping.expiry(), None);
 
-        let i = serde_json::from_str::<InterfaceDef<String>>(&json(1)).unwrap();
+        let i = serde_json::from_str::<InterfaceJson<String>>(&json(1)).unwrap();
 
         let mapping = i.mappings.first().unwrap();
 
@@ -663,7 +654,7 @@ mod tests {
     #[test]
     fn should_get_retention() {
         let json = |ttl: i64| {
-            serde_json::from_str::<InterfaceDef<String>>(&format!(
+            serde_json::from_str::<InterfaceJson<String>>(&format!(
                 r#"{{
             "interface_name": "org.astarte-platform.genericproperties.Values",
             "version_major": 1,
@@ -687,7 +678,7 @@ mod tests {
 
         assert_eq!(mapping.database_retention_ttl, Some(10));
         assert_eq!(
-            mapping.database_retention(),
+            mapping.database_retention_with_ttl(),
             DatabaseRetention::UseTtl {
                 ttl: Duration::from_secs(10)
             }
@@ -699,7 +690,7 @@ mod tests {
 
         assert_eq!(mapping.database_retention_ttl, Some(0));
         assert_eq!(
-            mapping.database_retention(),
+            mapping.database_retention_with_ttl(),
             DatabaseRetention::UseTtl {
                 ttl: Duration::from_secs(0)
             }
@@ -711,7 +702,7 @@ mod tests {
 
         assert_eq!(mapping.database_retention_ttl, Some(-32));
         assert_eq!(
-            mapping.database_retention(),
+            mapping.database_retention_with_ttl(),
             DatabaseRetention::UseTtl {
                 ttl: Duration::from_secs(0)
             }
