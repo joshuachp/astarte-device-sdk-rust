@@ -31,7 +31,7 @@ pub enum VersionChangeError {
     /// The minor version cannot be decreased.
     #[error("the minor version decreased: {0}")]
     MinorDecreased(VersionChange),
-    // The interface is different but the version did not change.
+    /// The interface is different but the version did not change.
     #[error("the version did not change: {0}")]
     SameVersion(VersionChange),
 }
@@ -65,11 +65,13 @@ impl VersionChange {
     }
 
     /// Returns the previous version
+    #[must_use]
     pub fn previous(&self) -> (i32, i32) {
         (self.prev_major, self.prev_minor)
     }
 
     /// Returns the next version
+    #[must_use]
     pub fn next(&self) -> (i32, i32) {
         (self.next_major, self.next_minor)
     }
@@ -220,7 +222,7 @@ mod test {
         )
         .unwrap();
 
-        assert!(new_interface.validate_with(&prev_interface).is_ok())
+        assert!(new_interface.validate_with(&prev_interface).is_ok());
     }
 
     #[test]

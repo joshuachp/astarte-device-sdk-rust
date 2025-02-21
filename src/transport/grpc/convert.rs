@@ -23,7 +23,6 @@
 
 use std::collections::HashMap;
 use std::num::TryFromIntError;
-use std::str::FromStr;
 
 use astarte_message_hub_proto::astarte_data_type::Data as ProtoData;
 use astarte_message_hub_proto::message_hub_event::Event;

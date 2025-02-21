@@ -236,6 +236,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "astarte-interfaces"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tracing",
+]
+
+[[package]]
 name = "astarte-message-hub-proto"
 version = "0.7.0"
 source = "git+https://github.com/astarte-platform/astarte-message-hub-proto.git?rev=5ff0672d8fdc8cba5a2ff023895ae505d75c3d1a#5ff0672d8fdc8cba5a2ff023895ae505d75c3d1a"
