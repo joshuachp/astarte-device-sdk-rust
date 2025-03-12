@@ -21,6 +21,21 @@
 
 use std::fmt::Display;
 
+/// Error that can happen while parsing the MQTT levels structure of the topic received.
+#[non_exhaustive]
+#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
+pub enum MappingPathError {
+    /// Missing forward slash at the beginning of the path.
+    #[error("path missing prefix: {0}")]
+    Prefix(String),
+    /// The path must contain at least one level.
+    #[error("path should have at least one level")]
+    Empty,
+    /// A path level must contain at least one character, it cannot be `//`.
+    #[error("path has an empty level: {0}")]
+    EmptyLevel(String),
+}
+
 /// Path of a mapping in interface.
 ///
 /// This is used to access the [`Interface`](crate::interface::Interface) so we can compare the parsed [`MappingPath`]
@@ -63,21 +78,6 @@ impl<'a> TryFrom<&'a str> for MappingPath<'a> {
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         parse_mapping(value)
     }
-}
-
-/// Error that can happen while parsing the MQTT levels structure of the topic received.
-#[non_exhaustive]
-#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
-pub enum MappingPathError {
-    /// Missing forward slash at the beginning of the path.
-    #[error("path missing prefix: {0}")]
-    Prefix(String),
-    /// The path must contain at least one level.
-    #[error("path should have at least one level")]
-    Empty,
-    /// A path level must contain at least one character, it cannot be `//`.
-    #[error("path has an empty level: {0}")]
-    EmptyLevel(String),
 }
 
 /// Parses the MQTT levels structure of the topic received.

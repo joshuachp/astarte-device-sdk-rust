@@ -176,6 +176,7 @@ name = "astarte-device-sdk"
 version = "0.9.6"
 dependencies = [
  "astarte-device-sdk-derive",
+ "astarte-interfaces",
  "astarte-message-hub-proto",
  "async-trait",
  "base64 0.22.1",

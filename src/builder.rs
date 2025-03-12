@@ -30,13 +30,13 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use astarte_interfaces::Interface;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;
-use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
 use crate::retention::memory::SharedVolatileStore;

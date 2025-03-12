@@ -23,6 +23,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::{collections::HashMap, sync::atomic::AtomicBool};
 
+use astarte_interfaces::interface::Retention;
+use astarte_interfaces::schema::{Aggregation, Ownership};
+use astarte_interfaces::{DatastreamIndividual, Interface, Introspection, MappingPath};
 use futures::future::Either;
 use itertools::Itertools;
 use tokio::sync::{Barrier, Notify};
@@ -33,15 +36,13 @@ use tokio::{
 use tracing::{debug, error, info, trace, warn};
 
 use crate::error::AggregateError;
+use crate::interfaces::MappingRef;
 use crate::transport::TransportError;
 use crate::{
     builder::DEFAULT_CHANNEL_SIZE,
     client::RecvError,
     error::Report,
     event::DeviceEvent,
-    interface::{
-        mapping::path::MappingPath, Aggregation as InterfaceAggregation, Ownership, Retention,
-    },
     interfaces::Interfaces,
     introspection::AddInterfaceError,
     retention::memory::{ItemValue, SharedVolatileStore},
@@ -49,7 +50,7 @@ use crate::{
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp},
     transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Error, Interface, Value,
+    Error, Value,
 };
 
 /// Handles the messages from the device and astarte.
@@ -663,9 +664,9 @@ where
 
         self.sender.remove_interface(&interfaces, to_remove).await?;
 
-        if let Some(prop) = to_remove.as_prop() {
+        if let Some(prop) = to_remove.as_properties() {
             // We cannot error here since we have already unsubscribed from the interface
-            if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
+            if let Err(err) = self.store.delete_interface(prop.name()).await {
                 error!(error = %Report::new(err),"failed to remove property");
             }
         } else if let Some(retention) = self.store.get_retention() {
@@ -719,8 +720,8 @@ where
 
         for (_, iface) in to_remove.iter() {
             // We cannot error here since we have already unsubscribed from the interface
-            if let Some(prop) = iface.as_prop() {
-                if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
+            if let Some(prop) = iface.as_properties() {
+                if let Err(err) = self.store.delete_interface(prop.name()).await {
                     error!(error = %Report::new(err), "failed to remove property");
                 }
             }
@@ -840,11 +841,11 @@ impl<S, C> DeviceReceiver<S, C> {
         };
 
         let (data, timestamp) = match interface.aggregation() {
-            InterfaceAggregation::Individual => {
+            Aggregation::Individual => {
                 self.handle_payload_individual(interface, &path, payload)
                     .await?
             }
-            InterfaceAggregation::Object => {
+            Aggregation::Object => {
                 self.handle_payload_object(interface, &path, payload)
                     .await?
             }
@@ -866,7 +867,7 @@ impl<S, C> DeviceReceiver<S, C> {
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let Some(mapping) = interface.as_mapping_ref(path) else {
+        let Some(mapping) = MappingRef::new(interface, path) else {
             return Err(TransportError::Recv(RecvError::MappingNotFound {
                 interface: interface.interface_name().to_string(),
                 mapping: path.to_string(),

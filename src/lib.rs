@@ -35,7 +35,6 @@ pub mod client;
 pub mod connection;
 pub mod error;
 pub mod event;
-pub mod interface;
 mod interfaces;
 pub mod introspection;
 pub mod prelude;
@@ -53,10 +52,10 @@ pub use crate::client::{Client, DeviceClient};
 pub use crate::connection::{DeviceConnection, EventLoop};
 pub use crate::error::Error;
 pub use crate::event::{DeviceEvent, FromEvent};
-pub use crate::interface::Interface;
 pub use crate::types::AstarteType;
 
 // Re-export rumqttc since we return its types in some methods
+pub use astarte_interfaces;
 pub use chrono;
 pub use rumqttc;
 
@@ -69,11 +68,11 @@ pub use astarte_device_sdk_derive::*;
 
 #[cfg(test)]
 mod test {
+    use astarte_interfaces::Interface;
     use base64::Engine;
     use mockall::predicate;
     use rumqttc::{AckOfPub, Event};
     use std::collections::HashMap;
-    use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::{mpsc, RwLock};
 
@@ -88,9 +87,7 @@ mod test {
     use crate::transport::mqtt::payload::Payload as MqttPayload;
     use crate::transport::mqtt::test::{mock_mqtt_connection, notify_success};
     use crate::transport::mqtt::Mqtt;
-    use crate::{
-        self as astarte_device_sdk, Client, DeviceClient, DeviceConnection, EventLoop, Interface,
-    };
+    use crate::{self as astarte_device_sdk, Client, DeviceClient, DeviceConnection, EventLoop};
     use crate::{types::AstarteType, Value};
     use astarte_device_sdk::AstarteAggregate;
     #[cfg(not(feature = "derive"))]

@@ -26,6 +26,8 @@ pub mod interface;
 pub mod mapping;
 pub mod schema;
 
+pub use self::error::Error;
+
 pub use self::interface::datastream::individual::DatastreamIndividual;
 pub use self::interface::datastream::object::DatastreamObject;
 pub use self::interface::properties::Properties;

@@ -30,6 +30,15 @@ repository = { workspace = true }
 rust-version = { workspace = true }
 description = "A library that provides communication and pairing primitives to an Astarte Cluster"
 
+[features]
+default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
+derive = ["dep:astarte-device-sdk-derive"]
+interface-strict = ["astarte-interfaces/strict"]
+message-hub = ["dep:astarte-message-hub-proto"]
+sqlite-trace = ["rusqlite/trace"]
+tokio-multi-thread = ["tokio/rt-multi-thread"]
+webpki = ["dep:webpki-roots"]
+
 [workspace]
 resolver = "2"
 members = [
@@ -51,6 +60,7 @@ rust-version = "1.78.0"
 
 [dependencies]
 astarte-device-sdk-derive = { workspace = true, optional = true }
+astarte-interfaces = { workspace = true }
 astarte-message-hub-proto = { workspace = true, optional = true }
 base64 = { workspace = true }
 bson = { workspace = true, features = ["chrono-0_4"] }
@@ -103,16 +113,6 @@ tracing-subscriber = { workspace = true }
 litemap = { workspace = true }
 zerofrom = { workspace = true }
 
-[features]
-default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
-derive = ["dep:astarte-device-sdk-derive"]
-interface-doc = []
-interface-strict = []
-message-hub = ["dep:astarte-message-hub-proto"]
-sqlite-trace = ["rusqlite/trace"]
-tokio-multi-thread = ["tokio/rt-multi-thread"]
-webpki = ["dep:webpki-roots"]
-
 [package.metadata.docs.rs]
 all-features = true
 rustc-args = ["--cfg=docsrs"]
@@ -120,6 +120,7 @@ rustc-args = ["--cfg=docsrs"]
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.9.6" }
 astarte-device-sdk-derive = { version = "=0.9.6", path = "./astarte-device-sdk-derive" }
+astarte-interfaces = { path = "./astarte-interfaces", version = "1.0.0-alpha.1" }
 astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto.git", rev = "5ff0672d8fdc8cba5a2ff023895ae505d75c3d1a" }
 async-trait = "0.1.67"
 base64 = "0.22.0"
@@ -142,9 +143,9 @@ proc-macro2 = "1.0.83"
 quote = "1.0.35"
 rand_core = "0.6.4"
 rcgen = { version = "0.13.1", default-features = false }
+regex = "1.11.0"
 reqwest = { version = "0.12.9", default-features = false }
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.6-ack-notify" }
-regex = "1.11.0"
 rusqlite = "0.29.0"
 rustls = "0.23.4"
 rustls-native-certs = "0.8.1"

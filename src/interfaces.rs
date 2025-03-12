@@ -23,17 +23,14 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::Deref;
 
+use astarte_interfaces::{
+    interface::validation::VersionChangeError, Interface, InterfaceMapping, Introspection,
+    MappingPath,
+};
 use itertools::Itertools;
 use tracing::{debug, trace};
 
-use crate::{
-    interface::{
-        error::InterfaceError,
-        mapping::path::MappingPath,
-        reference::{MappingRef, PropertyRef},
-    },
-    Error, Interface,
-};
+use crate::Error;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -62,7 +59,7 @@ impl Interfaces {
     pub(crate) fn validate(
         &self,
         interface: Interface,
-    ) -> Result<Option<Validated>, InterfaceError> {
+    ) -> Result<Option<Validated>, astarte_interfaces::Error> {
         let mut major_change = false;
 
         match self.interfaces.get(interface.interface_name()) {
@@ -348,16 +345,53 @@ where
     }
 }
 
+/// Reference to an [`Interface`] and a [`Mapping`] that is guaranty to belong to the interface.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MappingRef<'a, I, M> {
+    path: &'a MappingPath<'a>,
+    interface: &'a I,
+    mapping: &'a M,
+}
+
+impl<'a, M, I> MappingRef<'a, M, I> {
+    pub(crate) fn new(
+        interface: &'a I,
+        path: &'a MappingPath,
+    ) -> Option<MappingRef<'a, I, I::Mapping>>
+    where
+        I: astarte_interfaces::Introspection,
+    {
+        interface.mapping(path).map(|mapping| MappingRef {
+            interface,
+            path,
+            mapping,
+        })
+    }
+}
+
+impl<I, M> MappingRef<'_, I, M> {
+    pub(crate) fn mapping(&self) -> &M {
+        &self.mapping
+    }
+
+    pub(crate) fn interface(&self) -> &I {
+        &self.interface
+    }
+
+    pub(crate) fn path(&self) -> &MappingPath {
+        self.path
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::str::FromStr;
 
+    use astarte_interfaces::schema::MappingType;
+
     use super::*;
 
-    use crate::{
-        builder::DeviceBuilder,
-        interface::{mapping::path::tests::mapping, MappingType},
-    };
+    use crate::builder::DeviceBuilder;
 
     pub(crate) const PROPERTIES_SERVER: &str = r#"
         {
@@ -434,6 +468,10 @@ pub(crate) mod tests {
         endpoint: &'a str,
         explicit_timestamp: bool,
         allow_unset: bool,
+    }
+
+    fn mapping(s: &str) -> MappingPath {
+        MappingPath::try_from(s).unwrap()
     }
 
     impl CheckEndpoint<'_> {
