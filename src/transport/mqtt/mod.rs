@@ -49,6 +49,7 @@ use tracing::{debug, error, info, trace};
 
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    ValidatedProperty,
 };
 
 pub use self::config::Credential;
@@ -262,6 +263,16 @@ where
         .await
         .map(drop)
         .map_err(Error::Mqtt)
+    }
+
+    async fn send_property(&mut self, validated: ValidatedProperty) -> Result<(), Error> {
+        let buf =
+            payload::serialize_individual(&validated.data, None).map_err(MqttError::Payload)?;
+
+        self.send(&validated.interface, &validated.path, QoS::ExactlyOnce, buf)
+            .await
+            .map(drop)
+            .map_err(Error::Mqtt)
     }
 
     async fn send_object(&mut self, validated: ValidatedObject) -> Result<(), Error> {

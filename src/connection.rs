@@ -26,10 +26,7 @@ use std::{collections::HashMap, sync::atomic::AtomicBool};
 use futures::future::Either;
 use itertools::Itertools;
 use tokio::sync::{Barrier, Notify};
-use tokio::{
-    sync::{mpsc, oneshot, RwLock},
-    task::JoinSet,
-};
+use tokio::{sync::RwLock, task::JoinSet};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::error::AggregationError;
@@ -49,7 +46,7 @@ use crate::{
     retention::{self, RetentionId, StoredRetention, StoredRetentionExt},
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp},
     transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
-    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
+    validate::{ValidatedIndividual, ValidatedObject},
     Error, Interface, Value,
 };
 
@@ -104,7 +101,6 @@ where
     pub(crate) fn new(
         interfaces: Arc<RwLock<Interfaces>>,
         tx: flume::Sender<Result<DeviceEvent, RecvError>>,
-        client: mpsc::Receiver<ClientMessage>,
         volatile_store: SharedVolatileStore,
         store: StoreWrapper<S>,
         connection: C,
@@ -118,7 +114,6 @@ where
         Self {
             sender: DeviceSender {
                 interfaces: Arc::clone(&interfaces),
-                client,
                 store: store.clone(),
                 sender,
                 retention_ctx: retention::Context::new(),
@@ -267,7 +262,6 @@ where
 
 pub(crate) struct DeviceSender<S, T> {
     interfaces: Arc<RwLock<Interfaces>>,
-    pub(crate) client: mpsc::Receiver<ClientMessage>,
     store: StoreWrapper<S>,
     sender: T,
     retention_ctx: retention::Context,
@@ -930,8 +924,8 @@ impl<S, C> DeviceReceiver<S, C> {
     {
         let Some(object) = interface.as_object_ref() else {
             let aggr_err = AggregationError::new(
-                interface.interface_name().to_string(),
-                path.to_string(),
+                interface.interface_name(),
+                path,
                 InterfaceAggregation::Object,
                 InterfaceAggregation::Individual,
             );
@@ -970,48 +964,9 @@ impl<S, C> DeviceReceiver<S, C> {
     }
 }
 
-/// Message set from the [`DeviceClient`](crate::DeviceClient) to the [`DeviceConnection`].
-#[derive(Debug)]
-pub(crate) enum ClientMessage {
-    Individual(ValidatedIndividual),
-    Property {
-        data: ValidatedIndividual,
-        version_major: i32,
-    },
-    Object(ValidatedObject),
-    Unset(ValidatedUnset),
-    AddInterface {
-        interface: Interface,
-        response: oneshot::Sender<Result<bool, Error>>,
-    },
-    ExtendInterfaces {
-        interfaces: Vec<Interface>,
-        response: oneshot::Sender<Result<Vec<String>, Error>>,
-    },
-    RemoveInterface {
-        interface: String,
-        response: oneshot::Sender<Result<bool, Error>>,
-    },
-    RemoveInterfaces {
-        interfaces: Vec<String>,
-        response: oneshot::Sender<Result<Vec<String>, Error>>,
-    },
-    Disconnect,
-}
-
-impl ClientMessage {
-    /// Returns `true` if the client message is [`Disconnect`].
-    ///
-    /// [`Disconnect`]: ClientMessage::Disconnect
-    #[must_use]
-    pub(crate) fn is_disconnect(&self) -> bool {
-        matches!(self, Self::Disconnect)
-    }
-}
-
 /// Shared state of the connection
 #[derive(Debug)]
-struct ConnectionStatus {
+pub(crate) struct ConnectionStatus {
     /// Flag if we are connected
     connected: AtomicBool,
     /// Flag if the connection was closed gracefully
@@ -1033,7 +988,7 @@ impl ConnectionStatus {
         }
     }
 
-    fn is_connected(&self) -> bool {
+    pub(crate) fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Acquire)
     }
 

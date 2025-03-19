@@ -52,6 +52,7 @@ use uuid::Uuid;
 use self::convert::MessageHubProtoError;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    ValidatedProperty,
 };
 use crate::aggregate::AstarteObject;
 use crate::builder::ConnectionBuildConfig;
@@ -179,6 +180,15 @@ where
     S: StoreCapabilities + Send + Sync,
 {
     async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error> {
+        self.client
+            .send(tonic::Request::new(data.into()))
+            .await
+            .map_err(GrpcError::from)?;
+
+        Ok(())
+    }
+
+    async fn send_property(&mut self, data: ValidatedProperty) -> Result<(), crate::Error> {
         self.client
             .send(tonic::Request::new(data.into()))
             .await
@@ -443,8 +453,8 @@ where
 
         let individual = data.take_individual().ok_or_else(|| {
             let aggr_err = AggregationError::new(
-                mapping.interface().interface_name().to_string(),
-                mapping.path().to_string(),
+                mapping.interface().interface_name(),
+                mapping.path().as_str(),
                 Aggregation::Individual,
                 Aggregation::Object,
             );
@@ -470,7 +480,7 @@ where
             .and_then(|d| d.take_object())
             .ok_or_else(|| {
                 RecvError::Aggregation(AggregationError::new(
-                    object.interface.interface_name().to_string(),
+                    object.interface.interface_name(),
                     path.to_string(),
                     Aggregation::Object,
                     Aggregation::Individual,
