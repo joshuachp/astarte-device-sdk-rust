@@ -36,7 +36,7 @@ use crate::{
     interfaces::{self, Interfaces},
     retention::{PublishInfo, RetentionId},
     types::AstarteType,
-    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
+    validate::{ValidatedIndividual, ValidatedObject, ValidatedProperty, ValidatedUnset},
     Interface, Timestamp,
 };
 
@@ -44,6 +44,9 @@ use crate::{
 #[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
 pub mod grpc;
 pub mod mqtt;
+
+#[cfg(test)]
+pub(crate) mod mock;
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum TransportError {
@@ -117,6 +120,12 @@ pub(crate) trait Publish {
         data: PublishInfo<'_>,
     ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
+    /// Sends validated property values over this connection
+    fn send_property(
+        &mut self,
+        data: ValidatedProperty,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+
     /// Unset a property value over this connection.
     fn unset(
         &mut self,
@@ -144,12 +153,19 @@ pub(crate) trait Receive {
         &mut self,
     ) -> impl Future<Output = Result<Option<ReceivedEvent<Self::Payload>>, TransportError>> + Send;
 
+    /// Deserializes a received payload to an property.
+    fn deserialize_property(
+        &self,
+        mapping: &MappingRef<'_, &Interface>,
+        payload: Self::Payload,
+    ) -> Result<Option<AstarteType>, TransportError>;
+
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError>;
+    ) -> Result<(AstarteType, Option<Timestamp>), TransportError>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
@@ -208,7 +224,7 @@ pub(crate) trait Register {
 }
 
 /// Gracefully close the connection.
-pub trait Disconnect {
+pub(crate) trait Disconnect {
     /// Gracefully disconnect from the transport
     fn disconnect(&mut self) -> impl Future<Output = Result<(), crate::Error>> + Send;
 }
@@ -232,8 +248,8 @@ mod test {
     ) -> Result<ValidatedObject, crate::Error> {
         let object = interface.as_object_ref().ok_or_else(|| {
             let aggr_err = AggregationError::new(
-                interface.interface_name().to_string(),
-                path.to_string(),
+                interface.interface_name(),
+                path.as_str(),
                 crate::interface::Aggregation::Object,
                 interface.aggregation(),
             );

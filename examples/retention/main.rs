@@ -67,7 +67,7 @@ async fn main() -> Result<(), DynError> {
     std::fs::create_dir_all(&tmp_dir)?;
 
     // Create an Astarte Device (also performs the connection)
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .store_dir(&tmp_dir)
         .await?
         .interface_str(INTERFACE_STORED)?
@@ -87,16 +87,16 @@ async fn main() -> Result<(), DynError> {
 
         loop {
             client
-                .send(INTERFACE_STORED_NAME, "/endpoint1", counter)
+                .send_individual(INTERFACE_STORED_NAME, "/endpoint1", counter.into())
                 .await?;
             client
-                .send(INTERFACE_STORED_NAME, "/endpoint2", flag)
+                .send_individual(INTERFACE_STORED_NAME, "/endpoint2", flag.into())
                 .await?;
             client
-                .send(INTERFACE_VOLATILE_NAME, "/endpoint1", counter)
+                .send_individual(INTERFACE_VOLATILE_NAME, "/endpoint1", counter.into())
                 .await?;
             client
-                .send(INTERFACE_VOLATILE_NAME, "/endpoint2", flag)
+                .send_individual(INTERFACE_VOLATILE_NAME, "/endpoint2", flag.into())
                 .await?;
 
             counter += 1;

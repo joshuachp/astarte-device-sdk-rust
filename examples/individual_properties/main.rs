@@ -85,7 +85,7 @@ async fn main() -> Result<(), DynError> {
         .connection(mqtt_config)
         .build()
         .await?;
-    let device_cpy = client.clone();
+    let mut device_cpy = client.clone();
 
     println!("Connection to Astarte established.");
 
@@ -112,10 +112,10 @@ async fn main() -> Result<(), DynError> {
         // Send in a loop the change of the property "name" of sensor 1
         loop {
             device_cpy
-                .send(
+                .send_individual(
                     "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
                     "/1/name",
-                    format!("name number {i}"),
+                    format!("name number {i}").into(),
                 )
                 .await
                 .unwrap();

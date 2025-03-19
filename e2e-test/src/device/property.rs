@@ -19,15 +19,14 @@
 use std::collections::HashMap;
 
 use astarte_device_sdk::prelude::PropAccess;
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{AstarteType, Client, DeviceClient};
+use astarte_device_sdk::{AstarteType, Client};
 use eyre::{ensure, OptionExt};
 use tracing::{info, instrument};
 
 use crate::channel::Event;
 use crate::data::{all_type_data, InterfaceData};
 use crate::utils::check_astarte_value;
-use crate::Channel;
+use crate::{AstarteClient, Channel};
 
 #[derive(Debug)]
 struct DeviceProperty {}
@@ -69,10 +68,7 @@ impl InterfaceData for DevicePropertyOverflow {
     }
 }
 
-async fn validate_property<T>(
-    channel: &mut Channel,
-    client: &DeviceClient<SqliteStore>,
-) -> eyre::Result<()>
+async fn validate_property<T>(channel: &mut Channel, client: &mut AstarteClient) -> eyre::Result<()>
 where
     T: InterfaceData,
 {
@@ -86,7 +82,7 @@ where
             .await?
             .is_some()
         {
-            client.unset(&interface_name, &data_path).await?;
+            client.unset_property(&interface_name, &data_path).await?;
 
             let new_event = channel.next_event().await?;
             let Event::IncomingData {
@@ -101,7 +97,7 @@ where
 
         // Send prop
         client
-            .send(&interface_name, &data_path, data.clone())
+            .set_property(&interface_name, &data_path, data.clone())
             .await?;
 
         let new_event = channel.next_event().await?;
@@ -123,7 +119,7 @@ where
         ensure!(prop == data);
 
         // Unset
-        client.unset(&interface_name, &data_path).await?;
+        client.unset_property(&interface_name, &data_path).await?;
 
         let new_event = channel.next_event().await?;
         let Event::IncomingData {
@@ -146,10 +142,7 @@ where
 }
 
 #[instrument(skip_all)]
-pub(crate) async fn check(
-    channel: &mut Channel,
-    client: &DeviceClient<SqliteStore>,
-) -> eyre::Result<()> {
+pub(crate) async fn check(channel: &mut Channel, client: &mut AstarteClient) -> eyre::Result<()> {
     validate_property::<DeviceProperty>(channel, client).await?;
     validate_property::<DevicePropertyOverflow>(channel, client).await?;
 
