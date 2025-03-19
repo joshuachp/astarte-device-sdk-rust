@@ -39,6 +39,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     future::{Future, IntoFuture},
+    sync::Arc,
 };
 
 use bytes::Bytes;
@@ -49,6 +50,7 @@ use tracing::{debug, error, info, trace};
 
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    ValidatedProperty,
 };
 
 pub use self::config::Credential;
@@ -67,8 +69,9 @@ use crate::{
     interfaces::{self, Interfaces, Introspection},
     properties,
     retention::{
-        memory::SharedVolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
+        memory::VolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
     },
+    state::SharedState,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     AstarteType, Error, Interface, Timestamp,
@@ -149,7 +152,7 @@ pub struct MqttClient<S> {
     client: AsyncClient,
     retention: RetSender,
     store: StoreWrapper<S>,
-    volatile: SharedVolatileStore,
+    state: Arc<SharedState>,
 }
 
 impl<S> MqttClient<S> {
@@ -159,14 +162,14 @@ impl<S> MqttClient<S> {
         client: AsyncClient,
         retention: RetSender,
         store: StoreWrapper<S>,
-        volatile: SharedVolatileStore,
+        state: Arc<SharedState>,
     ) -> Self {
         Self {
             client_id,
             client,
             retention,
             store,
-            volatile,
+            state,
         }
     }
 
@@ -214,7 +217,7 @@ impl<S> MqttClient<S> {
     {
         match id {
             RetentionId::Volatile(id) => {
-                self.volatile.mark_received(id).await;
+                self.state.volatile_store.mark_received(id).await;
             }
             RetentionId::Stored(id) => {
                 if let Some(retention) = self.store.get_retention() {
@@ -232,7 +235,7 @@ impl<S> MqttClient<S> {
     {
         match id {
             RetentionId::Volatile(id) => {
-                self.volatile.mark_sent(id, true).await;
+                self.state.volatile_store.mark_sent(id, true).await;
             }
             RetentionId::Stored(id) => {
                 if let Some(retention) = self.store.get_retention() {
@@ -262,6 +265,16 @@ where
         .await
         .map(drop)
         .map_err(Error::Mqtt)
+    }
+
+    async fn send_property(&mut self, validated: ValidatedProperty) -> Result<(), Error> {
+        let buf =
+            payload::serialize_individual(&validated.data, None).map_err(MqttError::Payload)?;
+
+        self.send(&validated.interface, &validated.path, QoS::ExactlyOnce, buf)
+            .await
+            .map(drop)
+            .map_err(Error::Mqtt)
     }
 
     async fn send_object(&mut self, validated: ValidatedObject) -> Result<(), Error> {
@@ -553,7 +566,7 @@ pub struct Mqtt<S> {
     connection: MqttConnection,
     retention: MqttRetention,
     store: StoreWrapper<S>,
-    volatile: SharedVolatileStore,
+    state: Arc<SharedState>,
 }
 
 impl<S> Mqtt<S> {
@@ -567,20 +580,20 @@ impl<S> Mqtt<S> {
         connection: MqttConnection,
         retention: MqttRetention,
         store: StoreWrapper<S>,
-        volatile: SharedVolatileStore,
+        state: Arc<SharedState>,
     ) -> Self {
         Self {
             client_id,
             connection,
             retention,
             store,
-            volatile,
+            state,
         }
     }
 
     /// Marks the packets as received for the retention.
     async fn mark_packet_received(
-        volatile: &SharedVolatileStore,
+        volatile: &VolatileStore,
         stored: &impl StoreCapabilities,
         res_id: Result<RetentionId, TokenError>,
     ) -> Result<(), RetentionError>
@@ -625,7 +638,7 @@ impl<S> Mqtt<S> {
 
             match futures::future::select(self.retention.into_future(), &mut conn_future).await {
                 Either::Left((res, _)) => {
-                    Self::mark_packet_received(&self.volatile, &self.store, res)
+                    Self::mark_packet_received(&self.state.volatile_store, &self.store, res)
                         .await
                         .map_err(|err| TransportError::Transport(Error::Retention(err)))?;
                 }
@@ -879,9 +892,7 @@ pub(crate) mod test {
     };
 
     use crate::{
-        builder::{
-            ConnectionBuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY,
-        },
+        builder::{BuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
         store::memory::MemoryStore,
     };
 
@@ -916,7 +927,7 @@ pub(crate) mod test {
 
         let (ret_tx, ret_rx) = flume::unbounded();
 
-        let volatile = SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY);
+        let volatile = VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY);
 
         let store = StoreWrapper::new(store);
 
@@ -1291,7 +1302,7 @@ pub(crate) mod test {
 
         tokio::time::timeout(
             Duration::from_secs(3),
-            config.connect(ConnectionBuildConfig {
+            config.connect(BuildConfig {
                 store: builder.store,
                 interfaces: &builder.interfaces,
                 config: builder.config,

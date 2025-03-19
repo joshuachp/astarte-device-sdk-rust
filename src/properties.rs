@@ -29,6 +29,7 @@ use crate::{
     error::Error,
     interface::mapping::path::MappingPath,
     store::{PropertyStore, StoredProp},
+    transport::Connection,
     types::AstarteType,
 };
 
@@ -98,8 +99,9 @@ pub trait PropAccess {
     fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
 }
 
-impl<S> PropAccess for DeviceClient<S>
+impl<C, S> PropAccess for DeviceClient<C, S>
 where
+    C: Connection,
     S: PropertyStore,
 {
     async fn property(
@@ -109,22 +111,22 @@ where
     ) -> Result<Option<AstarteType>, Error> {
         let path = MappingPath::try_from(path)?;
 
-        let interfaces = &self.interfaces.read().await;
+        let interfaces = self.state.interfaces.read().await;
         let mapping = interfaces.property_mapping(interface_name, &path)?;
 
         self.try_load_prop(&mapping, &path).await
     }
 
     async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
-        let interfaces = &self.interfaces.read().await;
+        let interfaces = self.state.interfaces.read().await;
         let prop_if =
-            &interfaces
+            interfaces
                 .get_property(interface_name)
                 .ok_or_else(|| Error::InterfaceNotFound {
                     name: interface_name.to_string(),
                 })?;
 
-        let stored_prop = self.store.interface_props(&prop_if.into()).await?;
+        let stored_prop = self.store.interface_props(&(&prop_if).into()).await?;
 
         futures::stream::iter(stored_prop)
             .then(|p| async {
@@ -319,7 +321,10 @@ pub(crate) mod tests {
     }]
 }"#;
 
-    async fn test_prop_access_for_store<S: PropertyStore>(store: S) {
+    async fn test_prop_access_for_store<S>(store: S)
+    where
+        S: PropertyStore,
+    {
         store
             .store_prop(StoredProp {
                 interface: "org.Foo",

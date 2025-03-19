@@ -120,10 +120,15 @@ pub struct AggregationError {
 }
 
 impl AggregationError {
-    pub(crate) fn new(interface: String, path: String, exp: Aggregation, got: Aggregation) -> Self {
+    pub(crate) fn new(
+        interface: impl Into<String>,
+        path: impl Into<String>,
+        exp: Aggregation,
+        got: Aggregation,
+    ) -> Self {
         Self {
-            interface,
-            path,
+            interface: interface.into(),
+            path: path.into(),
             exp,
             got,
         }

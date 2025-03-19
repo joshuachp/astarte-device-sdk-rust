@@ -41,6 +41,7 @@ pub mod prelude;
 pub mod properties;
 pub mod retention;
 mod retry;
+pub(crate) mod state;
 pub mod store;
 pub mod transport;
 pub mod types;
@@ -73,20 +74,20 @@ mod test {
     use rumqttc::{AckOfPub, Event};
     use std::str::FromStr;
     use std::sync::Arc;
-    use tokio::sync::{mpsc, RwLock};
 
     use crate::aggregate::AstarteObject;
     use crate::builder::DEFAULT_VOLATILE_CAPACITY;
     use crate::interfaces::Interfaces;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::properties::PropAccess;
-    use crate::retention::memory::SharedVolatileStore;
+    use crate::retention::memory::VolatileStore;
+    use crate::state::SharedState;
     use crate::store::memory::MemoryStore;
     use crate::store::wrapper::StoreWrapper;
     use crate::store::PropertyStore;
     use crate::transport::mqtt::payload::Payload as MqttPayload;
     use crate::transport::mqtt::test::{mock_mqtt_connection, notify_success};
-    use crate::transport::mqtt::Mqtt;
+    use crate::transport::mqtt::{ClientId, Mqtt, MqttClient};
     #[cfg(feature = "derive")]
     use crate::IntoAstarteObject;
     use crate::{
@@ -133,8 +134,8 @@ mod test {
         eventloop: MqttEventLoop,
         interfaces: I,
     ) -> (
-        DeviceClient<MemoryStore>,
-        DeviceConnection<MemoryStore, Mqtt<MemoryStore>>,
+        DeviceClient<Mqtt<MemoryStore>, MemoryStore>,
+        DeviceConnection<Mqtt<MemoryStore>, MemoryStore>,
     )
     where
         I: IntoIterator<Item = Interface>,
@@ -147,27 +148,35 @@ mod test {
         eventloop: MqttEventLoop,
         interfaces: I,
         store: S,
-    ) -> (DeviceClient<S>, DeviceConnection<S, Mqtt<S>>)
+    ) -> (DeviceClient<Mqtt<S>, S>, DeviceConnection<Mqtt<S>, S>)
     where
         I: IntoIterator<Item = Interface>,
         S: PropertyStore,
     {
         let (tx_connection, rx_client) = flume::bounded(50);
-        let (tx_client, rx_connection) = mpsc::channel(50);
+        let (tx_retention, rx_retention) = flume::bounded(50);
 
-        let interfaces = Arc::new(RwLock::new(Interfaces::from_iter(interfaces)));
+        let interfaces = Interfaces::from_iter(interfaces);
 
         let (mqtt_client, mqtt_connection) =
             mock_mqtt_connection(async_client, eventloop, store.clone()).await;
 
         let store = StoreWrapper::new(store);
-        let client =
-            DeviceClient::new(Arc::clone(&interfaces), rx_client, tx_client, store.clone());
+        let state = Arc::new(SharedState::new(interfaces, VolatileStore::default()));
+
+        let client_id = ClientId {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+        };
+
+        let client = MqttClient::new(client_id, async_client, tx_retention, store, state);
+
+        let client = DeviceClient::new(async_client, rx_client, store.clone(), state);
         let device = DeviceConnection::new(
             interfaces,
             tx_connection,
             rx_connection,
-            SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
             store,
             mqtt_connection,
             mqtt_client,

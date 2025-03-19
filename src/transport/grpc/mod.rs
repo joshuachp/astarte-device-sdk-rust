@@ -26,6 +26,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::sync::Arc;
 use std::time::Duration;
 
 use astarte_message_hub_proto::prost::{DecodeError, Message};
@@ -49,14 +50,15 @@ use self::convert::MessageHubProtoError;
 use self::store::GrpcStore;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    ValidatedProperty,
 };
 use crate::aggregate::AstarteObject;
-use crate::builder::ConnectionBuildConfig;
+use crate::builder::BuildConfig;
 use crate::client::RecvError;
 use crate::error::AggregationError;
 use crate::interface::Aggregation;
-use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
+use crate::state::SharedState;
 use crate::Value;
 use crate::{
     builder::{ConnectionConfig, DeviceTransport},
@@ -131,7 +133,7 @@ impl Interceptor for NodeIdInterceptor {
 pub struct GrpcClient<S> {
     client: MsgHubClient,
     store: StoreWrapper<S>,
-    volatile: SharedVolatileStore,
+    state: Arc<SharedState>,
 }
 
 impl<S> GrpcClient<S> {
@@ -139,12 +141,12 @@ impl<S> GrpcClient<S> {
     pub(crate) fn new(
         client: MsgHubClient,
         store: StoreWrapper<S>,
-        volatile: SharedVolatileStore,
+        state: Arc<SharedState>,
     ) -> Self {
         Self {
             client,
             store,
-            volatile,
+            state,
         }
     }
 
@@ -154,7 +156,7 @@ impl<S> GrpcClient<S> {
     {
         match id {
             RetentionId::Volatile(id) => {
-                self.volatile.mark_received(id).await;
+                self.state.volatile_store.mark_received(id).await;
             }
             RetentionId::Stored(id) => {
                 if let Some(retention) = self.store.get_retention() {
@@ -180,6 +182,15 @@ where
     S: StoreCapabilities + Send + Sync,
 {
     async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error> {
+        self.client
+            .send(tonic::Request::new(data.into()))
+            .await
+            .map_err(GrpcError::from)?;
+
+        Ok(())
+    }
+
+    async fn send_property(&mut self, data: ValidatedProperty) -> Result<(), crate::Error> {
         self.client
             .send(tonic::Request::new(data.into()))
             .await
@@ -572,36 +583,36 @@ where
 
     async fn connect(
         self,
-        config: ConnectionBuildConfig<'_, S>,
-    ) -> Result<DeviceTransport<Self::Store, Self::Conn>, Self::Err> {
-        let ConnectionBuildConfig {
-            interfaces, config, ..
-        } = config;
-
+        config: BuildConfig<S>,
+    ) -> Result<DeviceTransport<Self::Conn, Self::Store>, Self::Err> {
         let channel = self.endpoint.connect().await.map_err(GrpcError::from)?;
 
         let node_id_interceptor = NodeIdInterceptor::new(self.uuid);
 
         let mut client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
 
-        let node_data = NodeData::try_from(interfaces)?;
-        let stream = Grpc::<StoreWrapper<S>>::attach(&mut client, node_data).await?;
+        let stream = {
+            let interfaces = config.state.interfaces.read().await;
+            let node_data = NodeData::try_from(&*interfaces)?;
 
-        let grpc_store = StoreWrapper::new(GrpcStore::new(client.clone()));
+            Grpc::<StoreWrapper<S>>::attach(&mut client, node_data).await?
+        };
 
-        let sender = GrpcClient::new(client.clone(), grpc_store.clone(), config.volatile.clone());
-        let receiver = Grpc::new(self.uuid, client, stream);
+        let store = StoreWrapper::new(GrpcStore::new(client.clone()));
+
+        // HACK: disable the volatile retention
+        config.state.volatile_store.set_capacity(0).await;
+
+        let state = Arc::clone(&config.state);
+
+        let sender = GrpcClient::new(client.clone(), store.clone(), state);
+        let connection = Grpc::new(self.uuid, client, stream);
 
         Ok(DeviceTransport {
             sender,
-            connection: receiver,
-            store: grpc_store,
+            connection,
+            store,
         })
-    }
-
-    fn volatile_capacity_override() -> Option<usize> {
-        // disable retention for the store
-        Some(0)
     }
 }
 
@@ -893,7 +904,7 @@ mod test {
         let client = GrpcClient::new(
             message_hub_client.clone(),
             StoreWrapper::new(store),
-            SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
         );
         let grcp = Grpc::new(ID, message_hub_client, stream);
 

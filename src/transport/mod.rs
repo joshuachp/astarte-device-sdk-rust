@@ -36,7 +36,7 @@ use crate::{
     interfaces::{self, Interfaces},
     retention::{PublishInfo, RetentionId},
     types::AstarteType,
-    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
+    validate::{ValidatedIndividual, ValidatedObject, ValidatedProperty, ValidatedUnset},
     Interface, Timestamp,
 };
 
@@ -115,6 +115,12 @@ pub(crate) trait Publish {
         &mut self,
         id: RetentionId,
         data: PublishInfo<'_>,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+
+    /// Sends validated property values over this connection
+    fn send_property(
+        &mut self,
+        data: ValidatedProperty,
     ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Unset a property value over this connection.
@@ -232,8 +238,8 @@ mod test {
     ) -> Result<ValidatedObject, crate::Error> {
         let object = interface.as_object_ref().ok_or_else(|| {
             let aggr_err = AggregationError::new(
-                interface.interface_name().to_string(),
-                path.to_string(),
+                interface.interface_name(),
+                path.as_str(),
                 crate::interface::Aggregation::Object,
                 interface.aggregation(),
             );
