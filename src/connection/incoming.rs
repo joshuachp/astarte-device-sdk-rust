@@ -16,7 +16,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use tracing::{debug, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::client::RecvError;
 use crate::error::{AggregationError, InterfaceTypeError};
@@ -32,6 +32,7 @@ impl<C, S> DeviceConnection<C, S>
 where
     C: Connection,
 {
+    #[instrument(skip(self, payload))]
     async fn handle_event(
         &self,
         interface: &str,
@@ -53,7 +54,7 @@ where
             }));
         };
 
-        let (data, timestamp) = match (interface.aggregation(), interface.interface_type()) {
+        let data = match (interface.aggregation(), interface.interface_type()) {
             (Aggregation::Individual, InterfaceTypeDef::Properties) => {
                 self.handle_property(interface, &path, payload).await?
             }
@@ -68,7 +69,7 @@ where
             }
         };
 
-        debug!("received {{v: {data:?}, t: {timestamp:?}}}");
+        debug!(?data, "received event");
 
         Ok(data)
     }
@@ -79,7 +80,7 @@ where
         interface: &Interface,
         path: &MappingPath<'_>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
+    ) -> Result<Value, TransportError>
     where
         S: PropertyStore,
         C: Receive + Sync,
@@ -116,9 +117,16 @@ where
                     interface.version_major()
                 );
 
-                Ok((Value::Individual(value), None))
+                Ok(Value::Property(Some(value)))
             }
             None => {
+                if !prop.allow_unset() {
+                    return Err(TransportError::Recv(RecvError::Unset {
+                        interface_name: prop.interface().interface_name().to_string(),
+                        path: prop.path().to_string(),
+                    }));
+                }
+
                 // Unset can only be received for a property
                 self.store
                     .delete_prop(&PropertyMapping::new_unchecked(
@@ -134,7 +142,7 @@ where
                     interface.version_major()
                 );
 
-                Ok((Value::Unset, None))
+                Ok(Value::Property(None))
             }
         }
     }
@@ -145,7 +153,7 @@ where
         interface: &Interface,
         path: &MappingPath<'_>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
+    ) -> Result<Value, TransportError>
     where
         S: PropertyStore,
         C: Receive + Sync,
@@ -157,11 +165,16 @@ where
             }));
         };
 
-        let (value, timestamp) = self.connection.deserialize_individual(&mapping, payload)?;
+        let (data, timestamp) = self.connection.deserialize_individual(&mapping, payload)?;
 
-        // TODO: maybe move validation from each connection to here
+        let timestamp = Self::validate_timestamp(
+            interface.interface_name(),
+            path.as_str(),
+            mapping.explicit_timestamp(),
+            timestamp,
+        )?;
 
-        Ok((Value::Individual(value), timestamp))
+        Ok(Value::Individual { data, timestamp })
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
@@ -170,7 +183,7 @@ where
         interface: &Interface,
         path: &MappingPath<'_>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
+    ) -> Result<Value, TransportError>
     where
         S: PropertyStore,
         C: Receive + Sync,
@@ -187,7 +200,14 @@ where
 
         let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
 
-        Ok((Value::Object(data), timestamp))
+        let timestamp = Self::validate_timestamp(
+            interface.interface_name(),
+            path.as_str(),
+            object.explicit_timestamp(),
+            timestamp,
+        )?;
+
+        Ok(Value::Object { data, timestamp })
     }
 
     pub(super) async fn handle_connection_event(
