@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -870,6 +870,7 @@ impl Next {
 mod tests {
     use std::{str::FromStr, time::Duration};
 
+    use astarte_interfaces::Interface;
     use mockall::predicate;
     use rumqttc::{AckOfPub, SubAck};
 
@@ -877,7 +878,7 @@ mod tests {
         store::{memory::MemoryStore, StoredProp},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
-        AstarteType, Interface,
+        AstarteType,
     };
 
     use super::*;

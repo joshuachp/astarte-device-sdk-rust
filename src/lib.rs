@@ -34,7 +34,6 @@ pub mod client;
 pub mod connection;
 pub mod error;
 pub mod event;
-pub mod interface;
 mod interfaces;
 pub mod introspection;
 pub mod prelude;
@@ -53,10 +52,10 @@ pub use crate::connection::{DeviceConnection, EventLoop};
 pub use crate::error::Error;
 pub use crate::event::Value;
 pub use crate::event::{DeviceEvent, FromEvent};
-pub use crate::interface::Interface;
 pub use crate::types::AstarteType;
 
 // Re-export rumqttc since we return its types in some methods
+pub use astarte_interfaces;
 pub use chrono;
 pub use rumqttc;
 

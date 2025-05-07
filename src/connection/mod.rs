@@ -220,6 +220,7 @@ where
 mod tests {
     use std::str::FromStr;
 
+    use astarte_interfaces::{Interface, Schema};
     use mockall::Sequence;
     use pretty_assertions::assert_eq;
 
@@ -231,7 +232,7 @@ mod tests {
     use crate::test::{E2E_SERVER_DATASTREAM, E2E_SERVER_DATASTREAM_NAME};
     use crate::transport::mock::{MockCon, MockSender};
     use crate::transport::ReceivedEvent;
-    use crate::{AstarteType, Interface};
+    use crate::AstarteType;
 
     use super::*;
 
@@ -324,8 +325,8 @@ mod tests {
             .once()
             .in_sequence(&mut seq)
             .withf(move |mapping, payload| {
-                mapping.interface().interface_name() == E2E_SERVER_DATASTREAM_NAME
-                    && mapping.path() == endpoint
+                mapping.interface().name() == E2E_SERVER_DATASTREAM_NAME
+                    && mapping.path().as_str() == endpoint
                     && *payload.downcast_ref::<bool>().unwrap() == value
             })
             .returning(|_, payload| {

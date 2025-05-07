@@ -27,6 +27,10 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use astarte_interfaces::schema::{Aggregation, InterfaceType};
+use astarte_interfaces::{
+    DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties, Schema,
+};
 use astarte_message_hub_proto::prost::{DecodeError, Message};
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
@@ -52,21 +56,17 @@ use crate::aggregate::AstarteObject;
 use crate::builder::BuildConfig;
 use crate::client::RecvError;
 use crate::error::{AggregationError, InterfaceTypeError, Report};
-use crate::interface::{Aggregation, InterfaceTypeDef};
+use crate::interfaces::MappingRef;
 use crate::retention::{PublishInfo, RetentionId};
 use crate::state::SharedState;
 use crate::{
     builder::{ConnectionConfig, DeviceTransport},
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef},
-    },
     interfaces::{self, Interfaces},
     retention::StoredRetention,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Error, Interface, Timestamp,
+    Error, Timestamp,
 };
 
 pub mod convert;
@@ -457,16 +457,16 @@ impl Receive for Grpc {
 
     fn deserialize_property(
         &self,
-        mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
     ) -> Result<Option<AstarteType>, TransportError> {
         let ProtoPayload::PropertyIndividual(prop) = payload.data else {
             return Err(TransportError::Recv(RecvError::InterfaceType(
                 InterfaceTypeError::with_path(
-                    mapping.interface().interface_name(),
+                    mapping.interface().name(),
                     mapping.path().to_string(),
-                    InterfaceTypeDef::Properties,
-                    InterfaceTypeDef::Datastream,
+                    InterfaceType::Properties,
+                    InterfaceType::Datastream,
                 ),
             )));
         };
@@ -485,7 +485,7 @@ impl Receive for Grpc {
 
     fn deserialize_individual(
         &self,
-        mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
         let ProtoPayload::DatastreamIndividual(individual) = payload.data else {
@@ -510,14 +510,14 @@ impl Receive for Grpc {
 
     fn deserialize_object(
         &self,
-        object: &ObjectRef,
+        object: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
         let ProtoPayload::DatastreamObject(data) = payload.data else {
             return Err(TransportError::Recv(RecvError::Aggregation(
                 AggregationError::new(
-                    object.interface.interface_name().to_string(),
+                    object.name(),
                     path.to_string(),
                     Aggregation::Object,
                     Aggregation::Individual,
@@ -683,7 +683,6 @@ mod test {
 
     use crate::retention::memory::VolatileStore;
     use crate::test::{DEVICE_OBJECT, E2E_SERVER_DATASTREAM};
-    use crate::transport::test::mock_validate_object;
     use crate::{aggregate::AstarteObject, builder::DEFAULT_VOLATILE_CAPACITY};
 
     use super::*;
@@ -1100,9 +1099,7 @@ mod test {
 
         let path = MappingPath::try_from(PATH).unwrap();
         let interfaces = Interfaces::from_iter([interface]);
-        let mapping_ref = interfaces
-            .interface_mapping(&interface_name, &path)
-            .unwrap();
+        let mapping_ref = interfaces.get_individual(&interface_name, &path).unwrap();
         let validated = ValidatedIndividual::validate(
             mapping_ref,
             AstarteType::String(STRING_VALUE.to_string()),
