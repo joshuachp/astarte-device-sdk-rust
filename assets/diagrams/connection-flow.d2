@@ -1,0 +1,39 @@
+B: Builder
+
+C1: DeviceClient
+
+B -> C1: build()
+
+D1: DeviceConnection
+
+C1 -> C1: is_connected(): false
+
+R1: Retention
+
+C1 -> R1: send_offline()
+
+B -> D1: build()
+
+D1 -> R1: reset_all()
+
+T: Transport
+
+D1 -> T: reconnect()
+
+R2: ResendTask
+
+R1-> R2: store_offline()
+T -> R2: connected()
+
+R2 -> R2: resend_stored()
+
+S: SharedState
+
+R2 -> S: set_connected(true)
+
+C2: DeviceClient
+D2: DeviceConnection
+
+S -> C2: send()
+S -> D2: handle_events()
+
