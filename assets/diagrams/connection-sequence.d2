@@ -1,0 +1,27 @@
+shape: sequence_diagram
+
+U: User
+U: {shape: person}
+B: Builder
+D: DeviceConnection
+T: Transport
+S: Storage
+
+U -> B.b: config
+U -> B.b: connection
+U -> B.b.s: storage
+B.b.s -> S.s: create
+S.s -> B.b.s: storage
+U -> B.b: build
+B.b.c -> T.o: connect
+T.o -> B.b.c: offline connection
+B.b.c -> D.o: offline
+D.o -> B.b.c: DeviceConnection
+B.b -> U: DeviceConnection
+U -> D.e: handle_events
+D.e -> S.r: reset_retention
+D.e -> T.c: reconnect
+T.c -> D.e: connected
+D.e -> D.e: set_connected
+D.e -> T.p: poll
+
