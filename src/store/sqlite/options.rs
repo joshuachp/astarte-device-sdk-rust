@@ -21,16 +21,18 @@
 //! This module provides structures to configure some sqlite options.
 //! It defines the `SqliteStoreOptions` struct which holds the editable options.
 
-use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::num::NonZero;
 
 use serde::{Deserialize, Serialize};
-use tracing::{error, instrument, trace};
+use tracing::{error, instrument, trace, warn};
 
 use crate::error::Report;
 
+pub(crate) use self::positive::PosI64;
+
 use super::connection::SqliteConnection;
 use super::{
-    Size, SqliteError, DEFAULT_MAX_READERS, SQLITE_DEFAULT_DB_MAX_SIZE, SQLITE_JOURNAL_SIZE_LIMIT,
+    DEFAULT_MAX_READERS, SQLITE_DEFAULT_DB_MAX_SIZE, SQLITE_JOURNAL_SIZE_LIMIT, Size, SqliteError,
 };
 
 /// Choices of limit of the size of the sqlite database
@@ -38,7 +40,7 @@ use super::{
 #[serde(rename_all = "snake_case")]
 pub enum SizeLimit {
     /// Set a size limit based on the number of pages
-    MaxPageCount(NonZeroU32),
+    MaxPageCount(NonZero<u32>),
     /// Set a size limit based on the actual size of the db file
     ///
     /// This value will be approximated if it's not a multiple of the database page size.
@@ -49,7 +51,7 @@ pub enum SizeLimit {
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 pub(crate) struct SqliteOptions {
     // Maximum number of read connection to open
-    max_readers: Option<NonZeroUsize>,
+    max_readers: Option<NonZero<usize>>,
     // Maximum size of the database file.
     //
     // This can be in pages or an actual file size.
@@ -73,7 +75,7 @@ impl SqliteOptions {
     /// This is the max number of readers and they are lazily created, so this number it's safe to
     /// be more than the actual available_parallelism.
     #[instrument]
-    pub(crate) fn max_readers(&self) -> NonZeroUsize {
+    pub(crate) fn max_readers(&self) -> NonZero<usize> {
         match self.max_readers {
             Some(readers) => readers,
             None => {
@@ -103,13 +105,68 @@ impl SqliteOptions {
     }
 
     /// Sets the database size limit
-    pub(crate) fn set_max_page_count(&mut self, max_page_count: NonZeroU32) {
+    pub(crate) fn set_max_page_count(&mut self, max_page_count: NonZero<u32>) {
         self.db_size_limit = Some(SizeLimit::MaxPageCount(max_page_count));
     }
 
     /// Sets the journal size limit
     pub(crate) fn set_journal_size_limit(&mut self, journal_size_limit: Size) {
         self.journal_size_limit = Some(journal_size_limit);
+    }
+}
+
+// Module to ensure the invariance is respected
+mod positive {
+    use std::fmt::Display;
+    use std::num::{NonZero, TryFromIntError};
+
+    /// A non zero positive integer
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    #[repr(transparent)]
+    pub(crate) struct PosI64(NonZero<i64>);
+
+    impl PosI64 {
+        pub(crate) const MAX: Self = PosI64::new(i64::MAX).unwrap();
+
+        /// Returns a value if it's between 1..i64::MAX
+        pub(crate) const fn new(value: i64) -> Option<Self> {
+            if value > 0 {
+                // Safety: we check the value to be greater than 0
+                let value = unsafe { NonZero::new_unchecked(value) };
+                Some(Self(value))
+            } else {
+                None
+            }
+        }
+
+        /// Returns the integer value
+        pub(crate) const fn get(self) -> NonZero<i64> {
+            self.0
+        }
+    }
+
+    impl From<PosI64> for NonZero<u64> {
+        fn from(value: PosI64) -> Self {
+            // The value is positive
+            let value = value.get().get() as u64;
+
+            // Safety: we guaranty the value to be non zero in creation.
+            unsafe { NonZero::new_unchecked(value) }
+        }
+    }
+
+    impl TryFrom<NonZero<u64>> for PosI64 {
+        type Error = TryFromIntError;
+
+        fn try_from(value: NonZero<u64>) -> Result<Self, Self::Error> {
+            NonZero::<i64>::try_from(value).map(Self)
+        }
+    }
+
+    impl Display for PosI64 {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            Display::fmt(&self.0, f)
+        }
     }
 }
 
@@ -120,11 +177,11 @@ impl SqliteOptions {
 #[derive(Clone, Debug)]
 pub(crate) struct SqlitePragmas {
     /// Maximum number of pages in the sqlite db file
-    pub(crate) max_page_count: NonZeroU32,
+    pub(crate) max_page_count: NonZero<u32>,
     /// Maximum size of the SQLite WAL journal
-    pub(crate) journal_size_limit: NonZeroU64,
+    pub(crate) journal_size_limit: PosI64,
     /// Limit of number of pages to wait before committing the WAL
-    pub(crate) wal_autocheckpoint: NonZeroU32,
+    pub(crate) wal_autocheckpoint: NonZero<u32>,
 }
 
 impl SqlitePragmas {
@@ -137,25 +194,36 @@ impl SqlitePragmas {
         C: SqliteConnection,
     {
         let page_size = connection.get_pragma("page_size").and_then(|page_size| {
-            NonZeroU64::new(page_size).ok_or(SqliteError::InvalidMaxSize {
+            PosI64::new(page_size).ok_or(SqliteError::InvalidMaxSize {
                 ctx: "couldn't read the db page size (0)",
             })
         })?;
 
-        trace!(page_size, "pragma page_size");
+        trace!(%page_size, "pragma page_size");
 
         let max_page_count = match options.db_size_limit() {
             SizeLimit::MaxPageCount(pages) => pages,
-            SizeLimit::DbMaxSize(size) => size.into_page_count(page_size),
+            SizeLimit::DbMaxSize(size) => size.into_page_count(page_size.into()),
         };
 
         let journal_size_limit = options.journal_size_limit();
 
-        let wal_autocheckpoint = journal_size_limit.into_wall_autocheckpoint(page_size);
+        let wal_autocheckpoint = journal_size_limit.into_wall_autocheckpoint(page_size.into());
+
+        let journal_size_limit_bytes = journal_size_limit.to_bytes();
+        let journal_size_limit_bytes =
+            PosI64::try_from(journal_size_limit_bytes).unwrap_or_else(|_| {
+                warn!(
+                    journal_size_limit_bytes,
+                    "capping the journal_size_limit bytes to i64::MAX"
+                );
+
+                PosI64::MAX
+            });
 
         let pragma = Self {
             max_page_count,
-            journal_size_limit: journal_size_limit.to_bytes(),
+            journal_size_limit: journal_size_limit_bytes,
             wal_autocheckpoint,
         };
 
