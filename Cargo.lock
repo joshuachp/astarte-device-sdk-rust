@@ -213,6 +213,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "astarte-device-sdk-ffi"
+version = "0.11.2"
+dependencies = [
+ "astarte-device-sdk",
+]
+
+[[package]]
 name = "astarte-device-sdk-mock"
 version = "0.12.1"
 dependencies = [
