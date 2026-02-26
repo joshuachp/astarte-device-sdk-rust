@@ -33,6 +33,7 @@ use self::de::{ArrayType, bson_array};
 
 pub(crate) mod de;
 mod display;
+pub mod uuid;
 
 macro_rules! check_astype_match {
     ( $self:ident, $other:ident, {$( $variant:tt ,)*}) => {
