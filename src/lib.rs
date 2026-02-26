@@ -66,6 +66,7 @@ pub use crate::types::AstarteData;
 pub use astarte_interfaces;
 pub use chrono;
 pub use rumqttc;
+pub use uuid;
 
 /// Timestamp returned in the astarte payload
 pub(crate) type Timestamp = chrono::DateTime<chrono::Utc>;
