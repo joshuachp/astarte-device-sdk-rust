@@ -18,25 +18,28 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{
-    collections::HashSet, error::Error as StdError, fmt::Debug, future::Future, num::NonZeroUsize,
-};
+use std::collections::HashSet;
+use std::fmt::Debug;
+use std::future::Future;
+use std::num::NonZeroUsize;
 
+use astarte_device_error::Error;
 use astarte_interfaces::schema::Ownership;
 use astarte_interfaces::{Properties, Schema};
 
+use self::error::StoreError;
 pub use self::sqlite::SqliteStore;
 use crate::interfaces::MappingRef;
+use crate::retention::StoredRetention;
 use crate::retention::{Id, PublishInfo, RetentionError, StoredInterface};
 use crate::session::{IntrospectionInterface, SessionError, StoredSession};
-use crate::{retention::StoredRetention, types::AstarteData};
+use crate::types::AstarteData;
 
 pub mod error;
 pub mod memory;
 #[cfg(test)]
 pub(crate) mod mock;
 pub mod sqlite;
-pub mod wrapper;
 
 /// Inform what capabilities are implemented for a store.
 ///
@@ -74,23 +77,19 @@ impl StoredRetention for MissingCapability {
         &self,
         _id: &Id,
         _publish: PublishInfo<'_>,
-    ) -> Result<(), RetentionError> {
+    ) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn update_sent_flag(&self, _id: &Id, _sent: bool) -> Result<(), RetentionError> {
+    async fn update_sent_flag(&self, _id: &Id, _sent: bool) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn mark_received(&self, _packet: &Id) -> Result<(), RetentionError> {
+    async fn mark_received(&self, _packet: &Id) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn delete_publish(&self, _id: &Id) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
+    async fn delete_interface(&self, _interface: &str) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
@@ -98,19 +97,24 @@ impl StoredRetention for MissingCapability {
         &self,
         _limit: usize,
         _buf: &mut Vec<(Id, PublishInfo<'static>)>,
-    ) -> Result<usize, RetentionError> {
+    ) -> Result<usize, Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
+    async fn reset_all_publishes(&self) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
+    async fn fetch_all_interfaces(
+        &self,
+    ) -> Result<HashSet<StoredInterface>, Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn set_max_retention_items(&self, _size: NonZeroUsize) -> Result<(), RetentionError> {
+    async fn set_max_retention_items(
+        &self,
+        _size: NonZeroUsize,
+    ) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 }
@@ -120,11 +124,11 @@ impl StoredSession for MissingCapability {
     async fn add_interfaces(
         &self,
         _interfaces: &[IntrospectionInterface<&str>],
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error<SessionError>> {
         unreachable!("the type is un-constructable");
     }
 
-    async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, SessionError> {
+    async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, Error<SessionError>> {
         unreachable!("the type is un-constructable");
     }
 
@@ -139,7 +143,7 @@ impl StoredSession for MissingCapability {
     async fn remove_interfaces(
         &self,
         _interfaces: &[IntrospectionInterface<&str>],
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error<SessionError>> {
         unreachable!("the type is un-constructable");
     }
 }
@@ -213,20 +217,12 @@ where
 ///
 /// This SDK provides an implementation of a sqlite database for which this trait has already
 /// been implemented, see [`crate::store::sqlite::SqliteStore`].
-pub trait PropertyStore: Clone + Debug + Send + Sync + 'static
-where
-    // NOTE: the bounds are required to be compatible with the tokio tasks, with an additional Sync
-    //       bound to further restrict the error type.
-    Self::Err: StdError + Send + Sync + 'static,
-{
-    /// Reason for a failed operation.
-    type Err;
-
+pub trait PropertyStore: Clone + Debug + Send + Sync + 'static {
     /// Stores a property within the database.
     fn store_prop(
         &self,
         prop: StoredProp<&str, &AstarteData>,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    ) -> impl Future<Output = Result<(), Error<StoreError>>> + Send;
     /// Update state flag of a property only if the value matches the expected one
     fn update_state(
         &self,

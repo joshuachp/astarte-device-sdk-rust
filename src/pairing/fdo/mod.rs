@@ -37,7 +37,6 @@ use url::Url;
 use crate::builder::{BuildConfig, Config, ConnectionConfig, DeviceTransport};
 use crate::pairing::api::client::{ApiClient, ClientArgs};
 use crate::store::StoreCapabilities;
-use crate::store::wrapper::StoreWrapper;
 use crate::transport::mqtt::components::ClientId;
 use crate::transport::mqtt::config::transport::TransportProvider;
 use crate::transport::mqtt::connection::MqttState;

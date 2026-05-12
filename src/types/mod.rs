@@ -23,6 +23,7 @@ use std::borrow::Borrow;
 use std::fmt::Display;
 use std::ops::Deref;
 
+use astarte_device_error::Error;
 use astarte_interfaces::schema::MappingType;
 use bson::Bson;
 use serde::Serialize;
@@ -77,13 +78,15 @@ macro_rules! impl_reverse_type_conversion_traits {
     ($(($variant:tt, $typ:ty),)*) => {
         $(
             impl std::convert::TryFrom<AstarteData> for $typ {
-                type Error = $crate::types::TypeError;
+                type Error = astarte_device_error::Error<$crate::types::TypeError>;
 
                 fn try_from(var: AstarteData) -> Result<Self, Self::Error> {
                     if let AstarteData::$variant(val) = var {
                         Ok(val)
                     } else {
-                        Err(Self::Error::conversion(format!("from {} into $typ", var.display_type())))
+                        let error = $crate::types::TypeError::conversion(format!("from {} into $typ", var.display_type()));
+
+                        Err(error)
                     }
                 }
             }
@@ -93,32 +96,40 @@ macro_rules! impl_reverse_type_conversion_traits {
 
 /// Astarte type conversion errors.
 #[non_exhaustive]
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TypeError {
     /// Invalid floating point value
-    #[error("forbidden floating point number, Nan, Infinite or subnormal numbers are invalid")]
     Float,
     /// Conversion error
-    #[error("couldn't convert value {ctx}")]
-    Conversion {
-        /// Context of the failed conversion
-        ctx: String,
-    },
+    Conversion,
     /// Failed to convert from Bson value
-    #[error("error converting from Bson to AstarteData ({0})")]
-    FromBsonError(String),
+    FromBson,
     /// Failed to convert from Bson array
-    #[error("type mismatch in bson array from astarte")]
-    FromBsonArrayError,
+    FromBsonArray,
     /// Invalid type convert between the BSON and [`AstarteData`]
-    #[error("type mismatch for bson and mapping")]
     InvalidType,
 }
 
 impl TypeError {
-    /// Error with context for the conversion
-    pub(crate) const fn conversion(ctx: String) -> Self {
-        Self::Conversion { ctx }
+    fn conversion(message: String) -> Error<Self> {
+        Error::new(Self::Conversion).set_message(message)
+    }
+}
+
+impl Display for TypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Float => write!(
+                f,
+                "forbidden floating point number, Nan, Infinite or subnormal numbers are invalid"
+            ),
+            Self::Conversion => write!(f, "couldn't convert value "),
+            Self::FromBson => {
+                write!(f, "error converting from Bson to AstarteData")
+            }
+            Self::FromBsonArray => write!(f, "type mismatch in bson array from astarte"),
+            Self::InvalidType => write!(f, "type mismatch for bson and mapping"),
+        }
     }
 }
 
@@ -318,14 +329,14 @@ impl TryFrom<Vec<f64>> for AstarteData {
 }
 
 impl TryFrom<AstarteData> for Vec<f64> {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
 
     fn try_from(value: AstarteData) -> Result<Self, Self::Error> {
         let AstarteData::DoubleArray(value) = value else {
-            return Err(TypeError::conversion(format!(
-                "from {} into Vec<f64>",
-                value.display_type()
-            )));
+            let error = Error::new(TypeError::Conversion)
+                .set_message(format!("from {} into Vec<f64>", value.display_type()));
+
+            return Err(error);
         };
 
         let vec = value.into_iter().map(Double::into).collect();
@@ -355,7 +366,7 @@ impl PartialEq<AstarteData> for Vec<f64> {
 }
 
 impl TryFrom<AstarteData> for f64 {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
 
     fn try_from(value: AstarteData) -> Result<Self, Self::Error> {
         match value {
@@ -369,7 +380,8 @@ impl TryFrom<AstarteData> for f64 {
 }
 
 impl TryFrom<AstarteData> for i64 {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
+
     fn try_from(value: AstarteData) -> Result<Self, Self::Error> {
         match value {
             AstarteData::LongInteger(val) => Ok(val),

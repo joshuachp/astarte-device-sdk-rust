@@ -69,9 +69,7 @@ use crate::retention::RetentionError;
 use crate::retention::{PublishInfo, RetentionId, StoredRetention, memory::VolatileStore};
 use crate::session::{IntrospectionInterface, StoredSession};
 use crate::state::SharedState;
-use crate::store::{
-    OptStoredProp, PropertyState, PropertyStore, StoreCapabilities, wrapper::StoreWrapper,
-};
+use crate::store::{OptStoredProp, PropertyState, PropertyStore, StoreCapabilities};
 use crate::transport::AttemptStatus;
 use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
 use crate::{AstarteData, Error, Timestamp};
@@ -105,17 +103,13 @@ pub(crate) struct ClientSender {
 pub struct MqttClient<S> {
     pub(crate) sender: Arc<OnceLock<ClientSender>>,
     retention: RetSender,
-    store: StoreWrapper<S>,
+    store: S,
     state: Arc<SharedState>,
 }
 
 impl<S> MqttClient<S> {
     /// Creates a new client that is missing the transport
-    pub(crate) fn new(
-        retention: RetSender,
-        store: StoreWrapper<S>,
-        state: Arc<SharedState>,
-    ) -> Self {
+    pub(crate) fn new(retention: RetSender, store: S, state: Arc<SharedState>) -> Self {
         Self {
             sender: Arc::new(OnceLock::new()),
             retention,
@@ -1431,10 +1425,8 @@ pub(crate) mod test {
 
         let result = client.add_interface(&interfaces, &to_add).await;
 
-        assert!(matches!(
-            result,
-            Err(Error::Session(SessionError::AddInterfaces(..)))
-        ));
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Session(SessionError::AddInterfaces));
     }
 
     #[tokio::test]

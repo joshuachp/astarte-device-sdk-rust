@@ -26,7 +26,7 @@ use std::{
 use astarte_interfaces::{Interface, error::Error as InterfaceError};
 use tracing::debug;
 
-use crate::Error;
+use crate::error::NewError;
 
 /// Error while adding an [`Interface`] to the device introspection.
 #[non_exhaustive]
@@ -98,7 +98,7 @@ pub trait DynamicIntrospection {
     fn add_interface(
         &mut self,
         interface: Interface,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, NewError>> + Send;
 
     /// Add one or more [`Interface`] to the device introspection.
     ///
@@ -106,7 +106,7 @@ pub trait DynamicIntrospection {
     fn extend_interfaces<I>(
         &mut self,
         interfaces: I,
-    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
+    ) -> impl Future<Output = Result<Vec<String>, NewError>> + Send
     where
         I: IntoIterator<Item = Interface> + Send;
 
@@ -116,7 +116,7 @@ pub trait DynamicIntrospection {
     fn add_interface_from_file<P>(
         &mut self,
         file_path: P,
-    ) -> impl Future<Output = Result<bool, Error>> + Send
+    ) -> impl Future<Output = Result<bool, NewError>> + Send
     where
         P: AsRef<Path> + Send + Sync;
 
@@ -127,7 +127,7 @@ pub trait DynamicIntrospection {
     fn add_interface_from_str(
         &mut self,
         json_str: &str,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, NewError>> + Send;
 
     /// Remove the interface with the name specified as argument.
     ///
@@ -135,7 +135,7 @@ pub trait DynamicIntrospection {
     fn remove_interface(
         &mut self,
         interface_name: &str,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, NewError>> + Send;
 
     /// Remove interfaces with names specified as argument.
     ///
@@ -143,7 +143,7 @@ pub trait DynamicIntrospection {
     fn remove_interfaces<I>(
         &mut self,
         interfaces_name: I,
-    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
+    ) -> impl Future<Output = Result<Vec<String>, NewError>> + Send
     where
         I: IntoIterator<Item = String> + Send,
         I::IntoIter: Send;

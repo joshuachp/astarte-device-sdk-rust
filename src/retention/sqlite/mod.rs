@@ -20,6 +20,7 @@
 
 use std::{borrow::Cow, collections::HashSet, num::TryFromIntError, time::Duration};
 
+use astarte_device_error::{Error, WrapError};
 use astarte_interfaces::schema::Reliability;
 use rusqlite::{
     ToSql,
@@ -220,59 +221,64 @@ impl FromSql for TimestampSecs {
 }
 
 impl StoredRetention for SqliteStore {
-    async fn store_publish(&self, id: &Id, info: PublishInfo<'_>) -> Result<(), RetentionError> {
+    async fn store_publish(
+        &self,
+        id: &Id,
+        info: PublishInfo<'_>,
+    ) -> Result<(), Error<RetentionError>> {
         let id = *id;
         let info = info.into_owned();
+
         self.pool
             .acquire_writer(move |writer| {
                 let mapping = RetentionMapping::from(&info);
-                let publish = RetentionPublish::from_info(id, &info)
-                    .map_err(|err| RetentionError::store(&info, err))?;
+                let publish = RetentionPublish::from_info(id, &info).wrap_err_with(|_error| {
+                    RetentionError::store("converting publish info", &info)
+                })?;
 
                 writer
                     .store(&mapping, &publish)
-                    .map_err(|err| RetentionError::store(&info, err))
+                    .wrap_err_with(|_error| RetentionError::store("storing at db", &info))
             })
             .await
+            .wrap_err_ctx(RetentionError::Connection, "while storing publish")
     }
 
-    async fn update_sent_flag(&self, id: &Id, sent: bool) -> Result<(), RetentionError> {
+    async fn update_sent_flag(&self, id: &Id, sent: bool) -> Result<(), Error<RetentionError>> {
         let id = *id;
 
         self.pool
             .acquire_writer(move |writer| writer.update_publish_sent_flag(&id, sent))
             .await
-            .map_err(|err| RetentionError::update_sent(id, sent, err))
+            .wrap_err_with(|err| RetentionError::update_sent(id, sent))
     }
 
-    async fn mark_received(&self, id: &Id) -> Result<(), RetentionError> {
+    async fn mark_received(&self, id: &Id) -> Result<(), Error<RetentionError>> {
         let id = *id;
 
         self.pool
             .acquire_writer(move |writer| writer.delete_publish_by_id(&id))
             .await
-            .map_err(|err| RetentionError::received(id, err))
+            .wrap_err_with(|err| Error::new(RetentionError::Received).set_message(id))
     }
 
-    async fn delete_publish(&self, id: &Id) -> Result<(), RetentionError> {
-        self.mark_received(id).await
-    }
-
-    async fn delete_interface(&self, interface: &str) -> Result<(), RetentionError> {
+    async fn delete_interface(&self, interface: &str) -> Result<(), Error<RetentionError>> {
         self.pool
             .acquire_writer({
                 let interface = interface.to_string();
                 move |writer| writer.delete_interface(&interface)
             })
             .await
-            .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))
+            .wrap_err_with(|err| {
+                Error::new(RetentionError::DeleteInterface).set_message(interface.to_string())
+            })
     }
 
     async fn unsent_publishes(
         &self,
         limit: usize,
         buf: &mut Vec<(Id, PublishInfo<'static>)>,
-    ) -> Result<usize, RetentionError> {
+    ) -> Result<usize, Error<RetentionError>> {
         let now = TimestampSecs::now();
 
         // This is to move the vec to another thread
@@ -281,7 +287,7 @@ impl StoredRetention for SqliteStore {
         self.pool
             .acquire_writer(move |writer| writer.delete_expired(&now))
             .await
-            .map_err(RetentionError::unsent)?;
+            .wrap_err_ctx(RetentionError::Unsent, "while deleting expired")?;
 
         let (buf_ret, count) = self
             .pool
@@ -291,30 +297,32 @@ impl StoredRetention for SqliteStore {
                 Ok((buf_take, count))
             })
             .await
-            .map_err(RetentionError::unsent)?;
+            .wrap_err(RetentionError::Unsent)?;
 
         *buf = buf_ret;
 
         Ok(count)
     }
 
-    async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
+    async fn reset_all_publishes(&self) -> Result<(), Error<RetentionError>> {
         let now = TimestampSecs::now();
 
         self.pool
             .acquire_writer(move |writer| writer.delete_expired(&now))
             .await
-            .map_err(RetentionError::unsent)?;
+            .wrap_err_ctx(RetentionError::Reset, "while deleting expired")?;
 
         self.pool
             .acquire_writer(|writer| writer.reset_all_sent())
             .await
-            .map_err(RetentionError::reset)?;
+            .wrap_err(RetentionError::Reset)?;
 
         Ok(())
     }
 
-    async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
+    async fn fetch_all_interfaces(
+        &self,
+    ) -> Result<HashSet<StoredInterface>, Error<RetentionError>> {
         self.pool
             .acquire_reader(|reader| reader.all_interfaces())
             .await

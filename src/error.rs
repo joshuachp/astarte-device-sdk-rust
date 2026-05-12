@@ -38,6 +38,42 @@ use crate::validate::UserValidationError;
 /// Dynamic error type
 pub(crate) type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+pub type NewError = astarte_device_error::Error<ErrorKind>;
+
+/// Astarte error.
+///
+/// Possible errors returned by functions of the Astarte device SDK.
+#[non_exhaustive]
+#[derive(Debug, PartialEq)]
+pub enum ErrorKind {
+    /// Generic I/O error
+    Io(std::io::ErrorKind),
+    /// Invalid or malformed interface
+    Interface,
+    /// Couldn't complete retention operation
+    Retention(RetentionError),
+    /// Grcp transport error
+    #[cfg(feature = "message-hub")]
+    Grpc(crate::transport::grpc::error::NewGrpcError),
+    /// Device is disconnected
+    Disconnected,
+}
+
+impl Display for ErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrorKind::Io(error_kind) => write!(f, "I/O error {error_kind}"),
+            ErrorKind::Interface => write!(f, "invalid Astarte interface"),
+            ErrorKind::Retention(retention_error) => {
+                write!(f, "retention operation failed {retention_error}")
+            }
+            ErrorKind::Disconnected => write!(f, "device is disconnected"),
+            #[cfg(feature = "message-hub")]
+            ErrorKind::Grpc(grpc_error) => write!(f, "Message Hub gRPC returned {grpc_error}"),
+        }
+    }
+}
+
 /// Astarte error.
 ///
 /// Possible errors returned by functions of the Astarte device SDK.

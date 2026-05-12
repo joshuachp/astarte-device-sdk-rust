@@ -20,17 +20,17 @@ use std::num::NonZero;
 use std::ops::ControlFlow;
 use std::time::Duration;
 
+use astarte_device_error::ResultExt;
 use astarte_interfaces::schema::Ownership;
 use tracing::{debug, error, info, instrument, trace};
 
 use crate::Error;
-use crate::error::Report;
+use crate::error::{ErrorKind, NewError, Report};
 use crate::retention::memory::ItemValue;
 use crate::retention::{
     RetentionId, StoredRetention, StoredRetentionExt, stored_mark_unsent, volatile_mark_unsent,
 };
 use crate::state::{ConnStatus, ConnectionState};
-use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyMapping, PropertyState, PropertyStore, StoreCapabilities};
 use crate::transport::{AttemptStatus, Connection, Publish, Receive, TransportError};
 
@@ -151,7 +151,7 @@ where
     /// This ignores the purge properties that should be sent by the connection implementation.
     /// Since the purge properties we sent earlier new properties could have gotten unset.
     async fn send_device_properties(
-        store: &mut StoreWrapper<C::Store>,
+        store: &mut C::Store,
         sender: &mut C::Sender,
         limit: usize,
     ) -> Result<usize, Error>
@@ -224,7 +224,7 @@ where
         sender: &mut C::Sender,
         state: &ConnectionState,
         limit: NonZero<usize>,
-    ) -> Result<usize, Error>
+    ) -> Result<usize, NewError>
     where
         C::Sender: Publish,
     {
@@ -265,10 +265,10 @@ where
     }
 
     async fn resend_stored_publishes(
-        store: &mut StoreWrapper<C::Store>,
+        store: &mut C::Store,
         sender: &mut C::Sender,
         limit: NonZero<usize>,
-    ) -> Result<usize, Error>
+    ) -> Result<usize, NewError>
     where
         C::Sender: Publish,
     {
@@ -280,18 +280,27 @@ where
 
         debug!("start sending store publishes");
 
-        let count = retention.unsent_publishes(limit.get(), &mut buf).await?;
+        let count = retention
+            .unsent_publishes(limit.get(), &mut buf)
+            .await
+            .map_kind(ErrorKind::Retention)?;
 
         trace!("loaded {count} stored publishes");
 
         for (id, info) in buf.drain(..) {
             // mark as sent before so that no resend is tried while in flight
-            retention.update_sent_flag(&id, true).await?;
+            retention
+                .update_sent_flag(&id, true)
+                .await
+                .map_kind(ErrorKind::Retention)?;
+
             let result = sender.resend_stored(RetentionId::Stored(id), info).await;
 
             if let Err(e) = result {
                 error!(error=%Report::new(&e), "error while sending stored marking unsent");
+
                 stored_mark_unsent(store, &id).await;
+
                 return Err(e);
             }
         }

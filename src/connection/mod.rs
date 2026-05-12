@@ -36,7 +36,6 @@ use crate::{
     Error,
     client::RecvError,
     event::DeviceEvent,
-    store::wrapper::StoreWrapper,
     transport::{Connection, Publish, Receive},
 };
 

@@ -34,6 +34,7 @@ use crate::{
     Timestamp,
     aggregate::AstarteObject,
     client::RecvError,
+    error::NewError,
     interfaces::{self, Interfaces, MappingRef},
     retention::{PublishInfo, RetentionId},
     store::{OptStoredProp, StoreCapabilities},
@@ -97,13 +98,13 @@ pub(crate) trait Publish {
     fn send_individual(
         &mut self,
         data: ValidatedIndividual,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Sends validated objects values over this connection
     fn send_object(
         &mut self,
         data: ValidatedObject,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Sends validated individual values with stored retention over this connection.
     ///
@@ -112,7 +113,7 @@ pub(crate) trait Publish {
         &mut self,
         id: RetentionId,
         data: ValidatedIndividual,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Sends validated objects values with stored retention over this connection
     ///
@@ -121,38 +122,35 @@ pub(crate) trait Publish {
         &mut self,
         id: RetentionId,
         data: ValidatedObject,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Resend previously stored publish.
     fn resend_stored(
         &mut self,
         id: RetentionId,
         data: PublishInfo<'_>,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Resend previously stored property.
     fn resend_stored_property(
         &mut self,
         property_data: OptStoredProp,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Sends validated property values over this connection
     fn send_property(
         &mut self,
         data: ValidatedProperty,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Unset a property value over this connection.
-    fn unset(
-        &mut self,
-        data: ValidatedUnset,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    fn unset(&mut self, data: ValidatedUnset) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Serializes an individual astarte value.
-    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error>;
+    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, NewError>;
 
     /// Serializes an aggregate object.
-    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error>;
+    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, NewError>;
 }
 
 pub(crate) trait Receive {
@@ -217,7 +215,7 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::Validated,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Called when multiple interfaces are added.
     ///
@@ -228,7 +226,7 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::ValidatedCollection,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Called when an interface gets removed from the device interface list.
     /// It relays to the server the removal of the interface.
@@ -236,7 +234,7 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         removed_interface: &Interface,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Called when multiple interfaces get removed from the device interface list.
     /// It relays to the server the removal of the interface.
@@ -244,11 +242,11 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         removed_interfaces: &HashMap<&str, &Interface>,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), NewError>> + Send;
 }
 
 /// Gracefully close the connection.
 pub(crate) trait Disconnect {
     /// Gracefully disconnect from the transport
-    fn disconnect(&mut self) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    fn disconnect(&mut self) -> impl Future<Output = Result<(), NewError>> + Send;
 }

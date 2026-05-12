@@ -19,6 +19,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "astarte-device-error",
   "astarte-device-sdk-derive",
   "astarte-device-sdk-mock",
   "astarte-test-utils",
@@ -103,6 +104,7 @@ path = "examples/retention/main.rs"
 required-features = ["derive"]
 
 [dependencies]
+astarte-device-error.workspace = true
 astarte-device-fdo = { workspace = true, optional = true }
 astarte-device-sdk-derive = { workspace = true, optional = true }
 astarte-interfaces.workspace = true
@@ -121,27 +123,26 @@ itertools.workspace = true
 mime.workspace = true
 rand = { workspace = true, features = ["sys_rng"] }
 # Use aws-lc-rs to support all PrivateKey types
-rcgen = { workspace = true, default-features = false, features = [
-  "pem",
-  "crypto",
-  "aws_lc_rs"
-] }
-reqwest = { workspace = true, default-features = false, features = [
-  "charset",
-  "json",
-  "http2",
-  "system-proxy",
-  "rustls-no-provider"
-] }
+rcgen = {
+  workspace = true,
+  default-features = false,
+  features = ["pem", "crypto", "aws_lc_rs"]
+}
+reqwest = {
+  workspace = true,
+  default-features = false,
+  features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"]
+}
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rustls.workspace = true
 rustls-native-certs.workspace = true
 rustls-pemfile.workspace = true
 # Required by rumqttc even if not used
-rustls-webpki = { workspace = true, default-features = false, features = [
-  "std",
-  "aws-lc-rs"
-] }
+rustls-webpki = {
+  workspace = true,
+  default-features = false,
+  features = ["std", "aws-lc-rs"]
+}
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sync_wrapper.workspace = true
@@ -174,12 +175,10 @@ rcgen = { workspace = true, features = ["pem", "x509-parser"] }
 rstest.workspace = true
 rustls-platform-verifier.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = [
-  "rt",
-  "rt-multi-thread",
-  "signal",
-  "test-util"
-] }
+tokio = {
+  workspace = true,
+  features = ["rt", "rt-multi-thread", "signal", "test-util"]
+}
 tokio-stream = { workspace = true, features = ["net"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -196,13 +195,17 @@ all-features = true
 rustdoc-args = ["--cfg=astarte_device_sdk_docsrs"]
 
 [workspace.dependencies]
-astarte-test-utils = { path = "./astarte-test-utils", version = "=0.13.0" }
+astarte-device-error = { path = "./astarte-device-error", version = "=0.13.0" }
 astarte-device-fdo = "1.0.1"
 astarte-device-sdk = { path = "./", version = "=0.13.0" }
-astarte-device-sdk-derive = { version = "=0.13.0", path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = {
+  version = "=0.13.0",
+  path = "./astarte-device-sdk-derive"
+}
 astarte-interfaces = "1.0.0"
 astarte-message-hub-proto = "0.10.1"
 astarte-message-hub-proto-mock = "0.10.1"
+astarte-test-utils = { path = "./astarte-test-utils", version = "=0.13.0" }
 async-channel = "2.0.0"
 aws-lc-rs = "1.14.0"
 base64 = "0.22.1"

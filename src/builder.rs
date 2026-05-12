@@ -47,8 +47,7 @@ use crate::retry::RandomExponentialIter;
 use crate::state::SharedState;
 use crate::store::PropertyStore;
 use crate::store::StoreCapabilities;
-use crate::store::sqlite::SqliteError;
-use crate::store::wrapper::StoreWrapper;
+use crate::store::sqlite::error::SqliteError;
 use crate::transport::Connection;
 
 /// Default capacity of the channels

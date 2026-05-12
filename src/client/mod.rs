@@ -20,13 +20,14 @@
 
 use std::future::Future;
 
+use astarte_device_error::ResultExt;
 use astarte_interfaces::{MappingPath, interface::Retention, mapping::path::MappingPathError};
 use chrono::{DateTime, Utc};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::Error;
 use crate::aggregate::AstarteObject;
-use crate::error::{AggregationError, DynError, InterfaceTypeError};
+use crate::error::{AggregationError, DynError, ErrorKind, InterfaceTypeError, NewError};
 use crate::event::DeviceEvent;
 use crate::logging::security::{SecurityEvent, notify_security_event};
 use crate::pairing::Pairing;
@@ -35,7 +36,7 @@ use crate::retention::{
     Id, RetentionId, StoredRetention, StoredRetentionExt, stored_mark_unsent, volatile_mark_unsent,
 };
 use crate::state::{ClientState, ConnStatus};
-use crate::store::{StoreCapabilities, wrapper::StoreWrapper};
+use crate::store::StoreCapabilities;
 use crate::transport::mqtt::{Mqtt, error::MqttError};
 use crate::transport::{Connection, Disconnect, Publish};
 use crate::types::AstarteData;
@@ -347,7 +348,7 @@ pub trait Client: Clone {
 /// Manages introspects the connection and device status.
 pub trait ClientConnection {
     /// Cleanly disconnects the client consuming it.
-    fn disconnect(&mut self) -> impl Future<Output = Result<(), Error>> + Send;
+    fn disconnect(&mut self) -> impl Future<Output = Result<(), NewError>> + Send;
 
     /// Check if the client is already paired.
     fn is_paired(&self) -> bool;
@@ -371,7 +372,7 @@ where
     // The tokio Broadcast channel provides an async mpmc, but suffer from the "slow receiver" problem.
     events: async_channel::Receiver<Result<DeviceEvent, RecvError>>,
     pub(crate) disconnect: async_channel::Sender<()>,
-    pub(crate) store: StoreWrapper<C::Store>,
+    pub(crate) store: C::Store,
     pub(crate) state: ClientState,
 }
 
@@ -382,7 +383,7 @@ where
     pub(crate) fn new(
         sender: C::Sender,
         rx: async_channel::Receiver<Result<DeviceEvent, RecvError>>,
-        store: StoreWrapper<C::Store>,
+        store: C::Store,
         state: ClientState,
         disconnect: async_channel::Sender<()>,
     ) -> Self {
@@ -397,10 +398,10 @@ where
 
     async fn send<T>(
         state: &ClientState,
-        store: &StoreWrapper<C::Store>,
+        store: &C::Store,
         sender: &mut C::Sender,
         data: T,
-    ) -> Result<(), Error>
+    ) -> Result<(), NewError>
     where
         T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
         C::Store: StoreCapabilities,
@@ -412,6 +413,7 @@ where
             }
             ConnStatus::Disconnected => {
                 trace!("publish while connection is offline");
+
                 return Self::offline_send(state, store, sender, data).await;
             }
             ConnStatus::Closed => {
@@ -421,7 +423,7 @@ where
                     error!(%error, "couldn't store the send");
                 }
 
-                return Err(Error::Disconnected);
+                return Err(NewError::with(ErrorKind::Disconnected, "cannot send data"));
             }
         }
 
@@ -434,10 +436,10 @@ where
 
     async fn offline_send<T>(
         state: &ClientState,
-        store: &StoreWrapper<C::Store>,
+        store: &C::Store,
         sender: &mut C::Sender,
         data: T,
-    ) -> Result<(), Error>
+    ) -> Result<(), NewError>
     where
         T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError>,
         C::Store: StoreCapabilities,
@@ -472,10 +474,10 @@ where
 
     async fn send_stored<T>(
         state: &ClientState,
-        store: &StoreWrapper<C::Store>,
+        store: &C::Store,
         sender: &mut C::Sender,
         data: T,
-    ) -> Result<(), Error>
+    ) -> Result<(), NewError>
     where
         T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
         C::Store: StoreCapabilities,
@@ -508,7 +510,7 @@ where
         state: &ClientState,
         sender: &mut C::Sender,
         data: T,
-    ) -> Result<(), Error>
+    ) -> Result<(), NewError>
     where
         T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
         C::Store: StoreCapabilities,
@@ -664,7 +666,7 @@ where
     C: Connection,
     C::Sender: Disconnect,
 {
-    async fn disconnect(&mut self) -> Result<(), Error> {
+    async fn disconnect(&mut self) -> Result<(), NewError> {
         if self.state.connection().await == ConnStatus::Closed {
             debug!("connection already closed");
 
@@ -690,11 +692,11 @@ where
 trait ClientPacket {
     fn get_retention(&self) -> Retention;
 
-    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, crate::Error>
+    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, NewError>
     where
         S: Publish;
 
-    fn send<S>(self, sender: &mut S) -> impl Future<Output = Result<(), crate::Error>> + Send
+    fn send<S>(self, sender: &mut S) -> impl Future<Output = Result<(), NewError>> + Send
     where
         S: Publish + Send;
 
@@ -702,7 +704,7 @@ trait ClientPacket {
         self,
         id: RetentionId,
         sender: &mut S,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send
+    ) -> impl Future<Output = Result<(), NewError>> + Send
     where
         S: Publish + Send;
 
@@ -712,7 +714,7 @@ trait ClientPacket {
         sender: &S,
         retention: &R,
         sent: bool,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send
+    ) -> impl Future<Output = Result<(), NewError>> + Send
     where
         S: Publish + Sync,
         R: StoredRetention + Sync;
@@ -723,21 +725,21 @@ impl ClientPacket for ValidatedIndividual {
         self.retention
     }
 
-    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, crate::Error>
+    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, NewError>
     where
         S: Publish,
     {
         sender.serialize_individual(self)
     }
 
-    async fn send<S>(self, sender: &mut S) -> Result<(), crate::Error>
+    async fn send<S>(self, sender: &mut S) -> Result<(), NewError>
     where
         S: Publish + Send,
     {
         sender.send_individual(self).await
     }
 
-    async fn send_stored<S>(self, id: RetentionId, sender: &mut S) -> Result<(), crate::Error>
+    async fn send_stored<S>(self, id: RetentionId, sender: &mut S) -> Result<(), NewError>
     where
         S: Publish,
     {
@@ -750,7 +752,7 @@ impl ClientPacket for ValidatedIndividual {
         sender: &S,
         retention: &R,
         sent: bool,
-    ) -> Result<(), crate::Error>
+    ) -> Result<(), NewError>
     where
         S: Publish + Sync,
         R: StoredRetention + Sync,
@@ -760,7 +762,7 @@ impl ClientPacket for ValidatedIndividual {
         retention
             .store_publish_individual(id, self, &serialized, sent)
             .await
-            .map_err(crate::Error::from)
+            .map_kind(ErrorKind::Retention)
     }
 }
 
@@ -769,21 +771,21 @@ impl ClientPacket for ValidatedObject {
         self.retention
     }
 
-    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, crate::Error>
+    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, NewError>
     where
         S: Publish,
     {
         sender.serialize_object(self)
     }
 
-    async fn send<S>(self, sender: &mut S) -> Result<(), crate::Error>
+    async fn send<S>(self, sender: &mut S) -> Result<(), NewError>
     where
         S: Publish + Send,
     {
         sender.send_object(self).await
     }
 
-    async fn send_stored<S>(self, id: RetentionId, sender: &mut S) -> Result<(), crate::Error>
+    async fn send_stored<S>(self, id: RetentionId, sender: &mut S) -> Result<(), NewError>
     where
         S: Publish + Send,
     {
@@ -796,7 +798,7 @@ impl ClientPacket for ValidatedObject {
         sender: &S,
         retention: &R,
         sent: bool,
-    ) -> Result<(), crate::Error>
+    ) -> Result<(), NewError>
     where
         S: Publish + Sync,
         R: StoredRetention + Sync,
@@ -806,7 +808,7 @@ impl ClientPacket for ValidatedObject {
         retention
             .store_publish_object(id, self, &serialized, sent)
             .await
-            .map_err(crate::Error::from)
+            .map_kind(ErrorKind::Retention)
     }
 }
 

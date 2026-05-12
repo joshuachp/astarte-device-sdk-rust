@@ -29,6 +29,7 @@ use mockall::mock;
 use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportError};
 use crate::aggregate::AstarteObject;
 use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
+use crate::error::NewError;
 use crate::interfaces::MappingRef;
 use crate::interfaces::{self, Interfaces};
 use crate::store::StoreCapabilities;
@@ -151,28 +152,28 @@ mock! {
             &mut self,
             interfaces: &Interfaces,
             added_interface: &interfaces::Validated,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), NewError>;
 
         async fn extend_interfaces(
             &mut self,
             interfaces: &Interfaces,
             added_interface: &interfaces::ValidatedCollection,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), NewError>;
 
         async fn remove_interface(
             &mut self,
             interfaces: &Interfaces,
             removed_interface: &Interface,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), NewError>;
 
         async fn remove_interfaces<'a,'b>(
             &mut self,
             interfaces: &Interfaces,
             removed_interfaces: &HashMap<&'a str, &'b Interface>,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), NewError>;
     }
 
     impl Disconnect for Sender {
-        async fn disconnect(&mut self) -> Result<(), crate::Error>;
+        async fn disconnect(&mut self) -> Result<(), NewError>;
     }
 }

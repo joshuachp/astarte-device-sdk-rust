@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use astarte_device_error::{Error, WrapError};
 use astarte_interfaces::schema::{MappingType, Ownership};
 use astarte_interfaces::{Properties, Schema};
 use rusqlite::ToSql;
@@ -33,6 +34,7 @@ use statements::include_query;
 use tracing::{debug, error, info, instrument, trace};
 
 use self::connection::SqliteConnection;
+use self::error::{SqliteError, ValueError};
 use self::pool::Connections;
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::store::sqlite::options::SqliteOptions;
@@ -43,6 +45,7 @@ use crate::{
 };
 
 pub(crate) mod connection;
+pub mod error;
 pub mod options;
 pub(crate) mod pool;
 pub(crate) mod statements;
@@ -81,51 +84,6 @@ pub const SQLITE_WAL_AUTOCHECKPOINT: u32 = 1000;
 ///
 /// This is the default if we cannot access the available_parallelism
 pub const DEFAULT_MAX_READERS: NonZero<usize> = NonZero::<usize>::new(4).unwrap();
-
-/// Error returned by the [`SqliteStore`].
-#[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
-pub enum SqliteError {
-    /// Error returned when the database connection fails.
-    #[error("could not connect to database")]
-    Connection(#[source] rusqlite::Error),
-    /// Couldn't set SQLite option.
-    #[error("couldn't set database option")]
-    Option(#[source] rusqlite::Error),
-    /// Couldn't prepare the SQLite statement.
-    #[error("couldn't prepare sqlite statement")]
-    Prepare(#[source] rusqlite::Error),
-    /// Couldn't start a transaction.
-    #[error("could not start a transaction database")]
-    Transaction(#[source] rusqlite::Error),
-    /// Couldn't run migration
-    #[error("couldn't run migration")]
-    Migration(#[source] rusqlite::Error),
-    /// Error returned when the database query fails.
-    #[error("could not execute query")]
-    Query(#[from] rusqlite::Error),
-    /// Couldn't convert the stored value.
-    #[error("couldn't convert the stored value")]
-    Value(#[from] ValueError),
-    /// Couldn't convert ownership value
-    #[error("could not deserialize ownership")]
-    Ownership(#[from] OwnershipError),
-    /// Couldn't set max size
-    #[error("couldn't set max size {ctx}")]
-    InvalidMaxSize {
-        /// Context of the error
-        ctx: &'static str,
-    },
-    /// Couldn't acquire a reader permit
-    #[error("couldn't acquire a reader permit")]
-    Reader,
-    /// Couldn't join the connection task
-    #[error("couldn't join the connection task")]
-    Join,
-    /// Couldn't convert passed input
-    #[error("couldn't convert passed input")]
-    Conversion(usize),
-}
 
 /// Error when converting a u8 into the [`Ownership`] struct.
 #[derive(Debug, thiserror::Error)]
@@ -178,30 +136,13 @@ impl FromSql for RecordOwnership {
         match value {
             0 => Ok(RecordOwnership::Device),
             1 => Ok(RecordOwnership::Server),
-            _ => Err(FromSqlError::Other(OwnershipError { value }.into())),
+            _ => Err(FromSqlError::Other(
+                Error::with(SqliteError::Ownership, "invalid ownership value")
+                    .set_message(value)
+                    .into(),
+            )),
         }
     }
-}
-
-/// Error when de/serializing a value stored in the [`SqliteStore`].
-#[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
-pub enum ValueError {
-    /// Couldn't convert to AstarteData.
-    #[error("couldn't convert to AstarteData")]
-    Conversion(#[from] TypeError),
-    /// Couldn't decode the BSON buffer.
-    #[error("couldn't decode property from bson")]
-    Decode(#[source] PayloadError),
-    /// Couldn't encode the BSON buffer.
-    #[error("couldn't encode property from bson")]
-    Encode(#[source] PayloadError),
-    /// Unsupported [`AstarteData`].
-    #[error("unsupported property type {0}")]
-    UnsupportedType(&'static str),
-    /// Unsupported [`AstarteData`].
-    #[error("unsupported stored type {0}, expected [0-13]")]
-    StoredType(u8),
 }
 
 /// Dimension of the database
@@ -295,7 +236,7 @@ struct PropRecord {
 }
 
 impl PropRecord {
-    fn try_into_value(self) -> Result<Option<AstarteData>, ValueError> {
+    fn try_into_value(self) -> Result<Option<AstarteData>, Error<ValueError>> {
         self.value
             .map(|value| deserialize_prop(self.stored_type, &value))
             .transpose()
@@ -806,10 +747,10 @@ impl PropertyStore for SqliteStore {
 }
 
 /// Deserialize a property from the store.
-fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteData, ValueError> {
+fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteData, Error<ValueError>> {
     let mapping_type = from_stored_type(stored_type)?;
 
-    let payload = Payload::from_slice(buf).map_err(ValueError::Decode)?;
+    let payload = Payload::from_slice(buf).wrap_err_ctx(ValueError::Decode, "property payload")?;
     let value = BsonConverter::new(mapping_type, payload.value);
 
     value.try_into().map_err(ValueError::from)

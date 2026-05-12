@@ -20,7 +20,9 @@
 //! Astarte types from the Astarte device SDK.
 
 use std::collections::HashMap;
+use std::fmt::Display;
 
+use astarte_device_error::Error;
 use astarte_interfaces::schema::Ownership;
 use astarte_message_hub_proto::astarte_data::AstarteData as ProtoData;
 use astarte_message_hub_proto::astarte_message::Payload as ProtoPayload;
@@ -43,24 +45,33 @@ use crate::{
     validate::ValidatedObject,
 };
 
-use super::{GrpcError, GrpcPayload, ValidatedProperty};
+use super::{GrpcPayload, ValidatedProperty};
 
 /// Error returned by the Message Hub types conversions.
 #[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MessageHubProtoError {
     /// Expected field was not found
-    #[error("missing the expected field '{0}'")]
-    ExpectedField(&'static str),
+    ExpectedField,
     /// Date conversion error
-    #[error("error while converting a proto timestamp")]
     Timestamp,
     /// Expected set property got an unset
-    #[error("expected set property got an unset")]
     ExpectedSetProperty,
     /// Couldn't convert proto to astarte type
-    #[error("couldn't convert proto to Astarte type")]
-    Conversion(#[from] TypeError),
+    Conversion(TypeError),
+}
+
+impl Display for MessageHubProtoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ExpectedField => write!(f, "missing the expected field"),
+            Self::Timestamp => write!(f, "error while converting a proto timestamp"),
+            Self::ExpectedSetProperty => write!(f, "expected set property got an unset"),
+            Self::Conversion(error) => {
+                write!(f, "couldn't convert proto to Astarte type {error}")
+            }
+        }
+    }
 }
 
 /// Map a received message hub property to an optional astarte type
@@ -139,12 +150,12 @@ fn convert_chrono(timestamp: crate::Timestamp) -> prost_types::Timestamp {
 }
 
 impl TryFrom<ProtoDataWrapper> for AstarteData {
-    type Error = MessageHubProtoError;
+    type Error = Error<MessageHubProtoError>;
 
     fn try_from(value: ProtoDataWrapper) -> Result<Self, Self::Error> {
         let astarte_data = value
             .astarte_data
-            .ok_or(MessageHubProtoError::ExpectedField("astarte_data"))?;
+            .ok_or_else(|| Error::with(MessageHubProtoError::ExpectedField, "astarte_data"))?;
 
         match astarte_data {
             ProtoData::DateTime(v) => convert_timestamp(v).map(AstarteData::DateTime),

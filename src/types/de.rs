@@ -62,7 +62,7 @@ where
     array
         .into_iter()
         .map(f)
-        .map(|item| item.ok_or(TypeError::FromBsonArrayError))
+        .map(|item| item.ok_or(TypeError::FromBsonArray))
         .collect()
 }
 
