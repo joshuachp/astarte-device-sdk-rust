@@ -18,7 +18,7 @@
 
 [workspace]
 resolver = "3"
-members = [
+members = ["astarte-device-error",
   "astarte-device-sdk-derive",
   "astarte-device-sdk-mock",
   "e2e-test",

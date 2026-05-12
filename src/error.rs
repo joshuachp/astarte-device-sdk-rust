@@ -43,78 +43,7 @@ pub(crate) type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
 /// Possible errors returned by functions of the Astarte device SDK.
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
-    /// The connection poll reached the max number of retries.
-    #[error("connection reached max retries")]
-    ConnectionTimeout,
-    /// Error while parsing interface.
-    #[error("couldn't parse interface")]
-    Interface(#[from] InterfaceError),
-    /// Error while operating on the device introspection.
-    #[error("couldn't complete introspection operation")]
-    AddInterface(#[from] AddInterfaceError),
-    /// Couldn't find an interface with the given name.
-    #[error("couldn't find interface '{name}'")]
-    InterfaceNotFound {
-        /// Name of the missing interface.
-        name: String,
-    },
-    /// Couldn't find missing mapping in the interface.
-    #[error("couldn't find mapping {mapping} in interface {interface}")]
-    MappingNotFound {
-        /// Name of the interface.
-        interface: String,
-        /// Path of the missing mapping.
-        mapping: String,
-    },
-    /// Couldn't parse the mapping path.
-    #[error("invalid mapping path")]
-    InvalidEndpoint(#[from] MappingPathError),
-    /// Errors when converting between Astarte types.
-    #[error("couldn't convert to Astarte Type")]
-    Types(#[from] TypeError),
-    /// Error while parsing the /control/consumer/properties payload.
-    #[error("couldn't handle properties")]
-    Properties(#[from] PropertiesError),
-    /// Error returned by a store operation.
-    #[error("couldn't complete store operation")]
-    Store(#[from] StoreError),
-    /// Send or receive validation failed
-    #[error("validation of the send payload failed")]
-    Validation(#[from] UserValidationError),
-    /// Invalid aggregation between the interface and the data.
-    #[error(transparent)]
-    Aggregation(#[from] AggregationError),
-    /// Invalid interface type between the interface and the data.
-    #[error(transparent)]
-    InterfaceType(#[from] InterfaceTypeError),
-    /// Couldn't build the device connection and client
-    #[error("couldn't build the device connection and client")]
-    Builder(#[from] BuilderError),
-    /// Error returned by the MQTT connection.
-    #[error(transparent)]
-    Mqtt(#[from] MqttError),
-    /// Error when the Device is disconnected from Astarte or client.
-    ///
-    /// This is an unrecoverable error for the SDK.
-    #[error("disconnected from Astarte")]
-    Disconnected,
-    /// Retention operation failed.
-    #[error("retention operation failed")]
-    Retention(#[from] RetentionError),
-    /// Persistent session operation failed
-    #[error("persistent session operation failed")]
-    Session(#[from] SessionError),
-    /// Error returned by the gRPC transport
-    #[cfg(feature = "message-hub")]
-    #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
-    #[error(transparent)]
-    Grpc(#[from] crate::transport::grpc::GrpcError),
-    /// Infallible error
-    #[doc(hidden)]
-    #[error(transparent)]
-    Infallible(#[from] Infallible),
-}
+pub enum ErrorKind {}
 
 /// Aggregation error.
 ///

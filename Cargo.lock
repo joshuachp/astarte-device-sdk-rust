@@ -154,6 +154,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "astarte-device-error"
+version = "0.13.0"
+
+[[package]]
 name = "astarte-device-fdo"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
