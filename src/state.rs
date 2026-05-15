@@ -18,6 +18,7 @@
 
 use std::fmt::Display;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -39,6 +40,7 @@ pub struct SharedState {
     pub(crate) retention_ctx: retention::Context,
     pub(crate) status: RwLock<ConnStatus>,
     pub(crate) cert_expiry: RwLock<Option<DateTime<Utc>>>,
+    pub(crate) paired: AtomicBool,
 }
 
 impl SharedState {
