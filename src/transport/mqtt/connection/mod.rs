@@ -123,6 +123,8 @@ pub(crate) struct MqttState<P> {
     /// The device is disconnected from Astarte, it will need to recreate the connection.
     pub(crate) pairing: P,
     state: State,
+    #[cfg(feature = "encrypted-endpoints")]
+    pub(crate) encrypted: super::encrypted::state::EncState,
 }
 
 impl<P> MqttState<P> {
@@ -130,6 +132,8 @@ impl<P> MqttState<P> {
         Self {
             pairing,
             state: State::Disconnected(Disconnected { connection: None }),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: super::encrypted::state::EncState::default(),
         }
     }
 
@@ -313,6 +317,8 @@ pub(crate) mod tests {
         MqttState {
             pairing: PairingApi::new(mqtt_config),
             state: State::Connected(mock_connected(client, eventloop)),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: crate::transport::mqtt::encrypted::state::EncState::default(),
         }
     }
 

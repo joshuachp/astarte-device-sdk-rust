@@ -27,6 +27,8 @@ pub(crate) mod components;
 pub(crate) mod config;
 pub(crate) mod connection;
 pub mod crypto;
+#[cfg(feature ="encrypted-endpoints")]
+pub(crate) mod encrypted;
 pub mod error;
 pub(crate) mod payload;
 pub(crate) mod retention;

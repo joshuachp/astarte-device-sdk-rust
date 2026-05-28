@@ -62,15 +62,13 @@ rust-version.workspace = true
 description = "A library that provides communication and pairing primitives to an Astarte Cluster"
 
 [features]
-default = ["interface-strict", "sqlite-trace"]
+default = []
 # Enable and exports the derive macros
 derive = ["dep:astarte-device-sdk-derive"]
 # Enable the registration of the device using the FIDO Device Onboard protocol
 fdo = ["dep:astarte-device-fdo"]
-# Deprecated: Add the documentation and description to the interfaces
-interface-doc = []
-# Deprecated: Add stricter checks to the interfaces
-interface-strict = []
+# Enable the encrypted-endpoints functionality
+encrypted-endpoints = ["coset", "minicbor"]
 # gRPC connection through the Astarte MessageHub
 message-hub = ["dep:astarte-message-hub-proto"]
 # Logs the SQLite queries and features
@@ -82,6 +80,7 @@ webpki = ["dep:webpki-roots"]
 tpm = ["astarte-device-fdo?/tpm"]
 # Compiles and uses the vendored version of the C dependencies
 vendored = ["rusqlite/bundled"]
+# Feature to make it easier to cross compile
 # Recreates the C bindings at buildtime, requires cmake, clang, and  bindgen-cli
 bindgen = ["rusqlite/buildtime_bindgen", "dep:aws-lc-rs", "aws-lc-rs/bindgen"]
 # Feature to make it easier to cross compile
@@ -113,35 +112,36 @@ bson = { workspace = true, features = ["chrono-0_4", "serde"] }
 bytes.workspace = true
 cfg-if.workspace = true
 chrono = { workspace = true, features = ["serde"] }
+coset = { workspace = true, optional = true }
 flate2.workspace = true
 futures.workspace = true
 http.workspace = true
 http-body-util.workspace = true
 itertools.workspace = true
 mime.workspace = true
+minicbor = { workspace = true, features = ["alloc", "derive"], optional = true }
 rand = { workspace = true, features = ["sys_rng"] }
 # Use aws-lc-rs to support all PrivateKey types
-rcgen = { workspace = true, default-features = false, features = [
-  "pem",
-  "crypto",
-  "aws_lc_rs"
-] }
-reqwest = { workspace = true, default-features = false, features = [
-  "charset",
-  "json",
-  "http2",
-  "system-proxy",
-  "rustls-no-provider"
-] }
+rcgen = {
+  workspace = true,
+  default-features = false,
+  features = ["pem", "crypto", "aws_lc_rs"]
+}
+reqwest = {
+  workspace = true,
+  default-features = false,
+  features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"]
+}
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rustls.workspace = true
 rustls-native-certs.workspace = true
 rustls-pemfile.workspace = true
 # Required by rumqttc even if not used
-rustls-webpki = { workspace = true, default-features = false, features = [
-  "std",
-  "aws-lc-rs"
-] }
+rustls-webpki = {
+  workspace = true,
+  default-features = false,
+  features = ["std", "aws-lc-rs"]
+}
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sync_wrapper.workspace = true
@@ -160,8 +160,8 @@ rusqlite.workspace = true
 
 [dev-dependencies]
 astarte-device-sdk-derive.workspace = true
-astarte-message-hub-proto-mock.workspace = true
 astarte-message-hub-proto.workspace = true
+astarte-message-hub-proto-mock.workspace = true
 astarte-test-utils.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
@@ -174,12 +174,10 @@ rcgen = { workspace = true, features = ["pem", "x509-parser"] }
 rstest.workspace = true
 rustls-platform-verifier.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = [
-  "rt",
-  "rt-multi-thread",
-  "signal",
-  "test-util"
-] }
+tokio = {
+  workspace = true,
+  features = ["rt", "rt-multi-thread", "signal", "test-util"]
+}
 tokio-stream = { workspace = true, features = ["net"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -196,13 +194,16 @@ all-features = true
 rustdoc-args = ["--cfg=astarte_device_sdk_docsrs"]
 
 [workspace.dependencies]
-astarte-test-utils = { path = "./astarte-test-utils", version = "=0.13.0" }
 astarte-device-fdo = "1.0.1"
 astarte-device-sdk = { path = "./", version = "=0.13.0" }
-astarte-device-sdk-derive = { version = "=0.13.0", path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = {
+  version = "=0.13.0",
+  path = "./astarte-device-sdk-derive"
+}
 astarte-interfaces = "1.0.0"
 astarte-message-hub-proto = "0.10.1"
 astarte-message-hub-proto-mock = "0.10.1"
+astarte-test-utils = { path = "./astarte-test-utils", version = "=0.13.0" }
 async-channel = "2.0.0"
 aws-lc-rs = "1.14.0"
 base64 = "0.22.1"
@@ -212,6 +213,7 @@ cfg-if = "1.0.0"
 chrono = "0.4.34"
 clap = "4.5.32"
 color-eyre = "0.6.3"
+coset = "0.4.2"
 darling = "0.23.0"
 eyre = "0.6.12"
 flate2 = "1.0.0"
@@ -221,6 +223,7 @@ http-body-util = "0.1.2"
 insta = "1.47.2"
 itertools = "0.14.0"
 mime = "0.3.16"
+minicbor = "2.2.2"
 mockall = "0.14.0"
 mockito = "1.4.0"
 phoenix-chan = "0.4.2"
@@ -231,10 +234,10 @@ rand = "0.10.0"
 rcgen = { version = "0.14.0", default-features = false }
 regex = "1.11.0"
 reqwest = { version = "0.13.0", default-features = false }
+rstest = "0.26.1"
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.9-ack-notify" }
 # for last diesel release compatibility and MSRV
 rusqlite = ">=0.35.0, <0.40.0"
-rstest = "0.26.1"
 rustls = "0.23.39"
 rustls-native-certs = "0.8.1"
 rustls-pemfile = "2.2.0"
