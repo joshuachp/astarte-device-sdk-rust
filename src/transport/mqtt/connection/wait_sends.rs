@@ -155,6 +155,9 @@ pub(crate) mod tests {
         pub(crate) interfaces: Interfaces,
         /// Whether the stored introspection matches the current one
         pub(crate) session_synced: bool,
+        #[cfg(feature = "encrypted-endpoints")]
+        pub(crate) encrypted:
+            Arc<tokio::sync::Mutex<crate::transport::mqtt::encrypted::state::EncState>>,
     }
 
     impl ConnectionCtx {
@@ -166,6 +169,8 @@ pub(crate) mod tests {
                 store: MockStore::default(),
                 interfaces: Interfaces::default(),
                 session_synced: true,
+                #[cfg(feature = "encrypted-endpoints")]
+                encrypted: Default::default(),
             }
         }
 
@@ -177,6 +182,7 @@ pub(crate) mod tests {
                 store: &self.store,
                 interfaces: &self.interfaces,
                 session_synced: self.session_synced,
+                encrypted: &self.encrypted,
             }
         }
     }

@@ -307,6 +307,8 @@ where
             retention,
             store: store.clone(),
             state,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: Default::default(),
         };
 
         Ok(DeviceTransport {
