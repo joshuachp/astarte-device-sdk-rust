@@ -20,6 +20,8 @@
 
 use tracing::trace;
 
+use crate::transport::mqtt::encrypted::messages::{ExchangeFailed, ExchangeResp};
+
 use super::ClientId;
 
 /// Error returned when parsing a topic.
@@ -62,7 +64,14 @@ impl TopicError {
 #[derive(Debug)]
 pub(crate) enum ParsedTopic<'a> {
     PurgeProperties,
-    InterfacePath { interface: &'a str, path: &'a str },
+    InterfacePath {
+        interface: &'a str,
+        path: &'a str,
+    },
+    #[cfg(feature = "encrypted-endpoints")]
+    ExchangeResp,
+    #[cfg(feature = "encrypted-endpoints")]
+    ExchangeFailed,
 }
 
 impl<'a> ParsedTopic<'a> {
@@ -90,6 +99,10 @@ impl<'a> ParsedTopic<'a> {
 
         if rest == Self::PURGE_PROPERTIES_TOPIC {
             return Ok(Self::PurgeProperties);
+        } else if rest == ExchangeResp::TOPIC {
+            return Ok(Self::ExchangeResp);
+        } else if rest == ExchangeFailed::TOPIC {
+            return Ok(Self::ExchangeFailed);
         }
 
         let idx = rest

@@ -27,6 +27,8 @@ pub(crate) mod components;
 pub(crate) mod config;
 pub(crate) mod connection;
 pub mod crypto;
+#[cfg(feature = "encrypted-endpoints")]
+pub mod encrypted;
 pub mod error;
 pub(crate) mod payload;
 pub(crate) mod retention;
@@ -666,6 +668,8 @@ pub struct Mqtt<S, P> {
     pub(crate) retention: MqttRetention,
     pub(crate) store: S,
     pub(crate) state: Arc<SharedState>,
+    #[cfg(feature = "encrypted-endpoints")]
+    pub(crate) encrypted: Arc<tokio::sync::Mutex<self::encrypted::state::EncState>>,
 }
 
 impl<S, P> Mqtt<S, P> {
@@ -795,6 +799,33 @@ impl<S, P> Mqtt<S, P> {
                 path: path.to_string(),
                 payload: publish.payload,
             })),
+            #[cfg(feature = "encrypted-endpoints")]
+            ParsedTopic::ExchangeResp => {
+                info!("Encrypted exchange response received");
+
+                let resp = self::encrypted::messages::ExchangeResp::decode_msg(&publish.payload)
+                    .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+                self.encrypted
+                    .lock()
+                    .await
+                    .secret(resp.pub_key())
+                    .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+                Ok(None)
+            }
+            #[cfg(feature = "encrypted-endpoints")]
+            ParsedTopic::ExchangeFailed => {
+                info!("Encrypted exchange failed");
+
+                let error = self::encrypted::messages::ExchangeFailed::decode_msg(&publish.payload)
+                    .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+                // FIXME: check the error code and retry
+                error!(%error, "encrypted exchange failed");
+
+                Ok(None)
+            }
         }
     }
 }
@@ -833,6 +864,8 @@ where
             store: &self.store,
             interfaces,
             session_synced: false,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: &self.encrypted,
         };
 
         loop {
@@ -1138,6 +1171,8 @@ pub(crate) mod test {
             retention: MqttRetention::new(ret_rx),
             store: store.clone(),
             state: Arc::clone(&state),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: Default::default(),
         };
 
         let mqtt_client = MqttClient {

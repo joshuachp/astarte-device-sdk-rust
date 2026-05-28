@@ -39,6 +39,10 @@ pub struct ConnCtx<'a, S> {
     pub(crate) interfaces: &'a Interfaces,
     /// Whether the stored introspection matches the current one
     pub(crate) session_synced: bool,
+    #[cfg(feature = "encrypted-endpoints")]
+    /// State of the encrypted handshake
+    pub(crate) encrypted:
+        &'a Arc<tokio::sync::Mutex<crate::transport::mqtt::encrypted::state::EncState>>,
 }
 
 /// Struct to hold the connection and client to be passed to the state.

@@ -77,6 +77,8 @@ impl<'a> Handshake<'a> {
             client_id.into(),
             ctx.store.clone(),
             session_data,
+            #[cfg(feature = "encrypted-endpoints")]
+            std::sync::Arc::clone(ctx.encrypted),
         ))
     }
 
@@ -85,12 +87,29 @@ impl<'a> Handshake<'a> {
         client_id: ClientId,
         store: S,
         session_data: SessionData,
+        #[cfg(feature = "encrypted-endpoints")] enc: std::sync::Arc<
+            tokio::sync::Mutex<crate::transport::mqtt::encrypted::state::EncState>,
+        >,
     ) -> TaskHandle
     where
         S: PropertyStore + StoreCapabilities,
     {
         let handle = tokio::spawn(async move {
             let client_id = client_id.as_ref();
+
+            #[cfg(feature = "encrypted-endpoints")]
+            {
+                use crate::transport::mqtt::encrypted::state::EncState;
+
+                let mut enc = enc.lock().await;
+
+                let init = enc.init().map_kind(MqttError::Encryption)?;
+
+                EncState::subscribe(&client, &client_id).await?;
+
+                init.send(&client, &client_id).await?;
+            }
+
             Self::subscribe_server_interfaces(&client, client_id, &session_data.server_interfaces)
                 .await?;
 
