@@ -34,10 +34,12 @@ use crate::error::AstarteError;
 use crate::error::ErrorKind;
 use crate::error::InterfaceError;
 use crate::error::Report;
+use crate::event::ConnectionEvent;
 use crate::event::DeviceEvent;
 use crate::retry::RandomExponentialIter;
 use crate::state::{ConnStatus, ConnectionState};
 use crate::transport::ReceivedEvent;
+use crate::transport::TransportEvent;
 use crate::transport::{Connection, Publish, Receive};
 
 mod incoming;
@@ -91,7 +93,8 @@ pub struct DeviceConnection<C>
 where
     C: Connection,
 {
-    events: async_channel::Sender<DeviceEvent>,
+    data_events: async_channel::Sender<DeviceEvent>,
+    connection_events: async_channel::Sender<ConnectionEvent>,
     disconnect: async_channel::Receiver<()>,
     store: C::Store,
     connection: C,
@@ -106,7 +109,8 @@ where
     C: Connection,
 {
     pub(crate) fn new(
-        events: async_channel::Sender<DeviceEvent>,
+        data_events: async_channel::Sender<DeviceEvent>,
+        connection_events: async_channel::Sender<ConnectionEvent>,
         disconnect: async_channel::Receiver<()>,
         store: C::Store,
         state: ConnectionState,
@@ -115,7 +119,8 @@ where
         backoff: RandomExponentialIter,
     ) -> Self {
         Self {
-            events,
+            data_events,
+            connection_events,
             store,
             state,
             connection,
@@ -168,23 +173,38 @@ where
         C::Sender: Publish + 'static,
     {
         trace!("polling connection");
-        let Some(event) = self.connection.next_event().await? else {
-            info!("disconnected");
 
-            self.state.set_connection(ConnStatus::Disconnected).await;
+        match self.connection.next_event().await? {
+            TransportEvent::Received(event) => {
+                trace!("data event received");
 
-            // This will check if the connection was closed
-            return Ok(ConnStatus::Disconnected);
-        };
+                self.handle_and_send_data(event).await?;
 
-        trace!("event received");
+                Ok(ConnStatus::Connected)
+            }
+            TransportEvent::Connection {
+                state,
+                disconnected,
+            } => {
+                trace!("connection event received");
 
-        self.handle_and_send_to_client(event).await?;
+                self.handle_and_send_connection(ConnectionEvent { state: state });
 
-        Ok(ConnStatus::Connected)
+                if disconnected {
+                    info!("disconnected");
+
+                    self.state.set_connection(ConnStatus::Disconnected).await;
+
+                    // This will check if the connection was closed
+                    Ok(ConnStatus::Disconnected)
+                } else {
+                    Ok(ConnStatus::Connected)
+                }
+            }
+        }
     }
 
-    async fn handle_and_send_to_client(
+    async fn handle_and_send_data(
         &self,
         event: ReceivedEvent<C::Payload>,
     ) -> Result<(), AstarteError>
@@ -220,7 +240,7 @@ where
     }
 
     async fn send_to_clients(&self, event: DeviceEvent) -> Result<(), SendError<DeviceEvent>> {
-        let send = pin!(self.events.send(event));
+        let send = pin!(self.data_events.send(event));
         let timeout = pin!(tokio::time::sleep(self.state.config().slow_receive));
 
         match futures::future::select(send, timeout).await {
@@ -234,6 +254,22 @@ where
                 send.await
             }
         }
+    }
+
+    fn handle_and_send_connection(&self, event: ConnectionEvent) -> Result<(), AstarteError> {
+        match self.connection_events.force_send(event) {
+            Ok(Some(event)) => {
+                warn!(%event, "connection event queue full, event dropped");
+            }
+            Ok(None) => {}
+            Err(error) => {
+                debug!(error = %Report::new(error), "disconnected");
+
+                return Err(Error::new(ErrorKind::Disconnected));
+            }
+        }
+
+        Ok(())
     }
 
     async fn run_until_disconnect<F>(
@@ -361,6 +397,7 @@ mod tests {
     {
         pub(crate) inner: DeviceConnection<MockCon<S>>,
         pub(crate) events: async_channel::Receiver<DeviceEvent>,
+        pub(crate) conn_events: async_channel::Receiver<ConnectionEvent>,
         pub(crate) disconnect: async_channel::Sender<()>,
     }
 
@@ -405,6 +442,7 @@ mod tests {
         let connection = MockCon::new();
         let sender = MockSender::new();
         let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
+        let (conn_events_tx, conn_events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
         let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
         let mut state = SharedState::new(
             Config::default(),
@@ -416,6 +454,7 @@ mod tests {
 
         let connection = DeviceConnection::new(
             events_tx,
+            conn_events_tx,
             disconnect_rx,
             store,
             ConnectionState::new(Arc::new(state)),
@@ -427,6 +466,7 @@ mod tests {
         TestConnection {
             inner: connection,
             events: events_rx,
+            conn_events: conn_events_rx,
             disconnect: disconnect_tx,
         }
     }

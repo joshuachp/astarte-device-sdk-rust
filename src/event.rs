@@ -28,6 +28,20 @@ use crate::{AstarteData, Timestamp};
 /// Astarte device event data structure.
 ///
 /// Data structure received from the [`Client`](crate::DeviceClient) when the
+/// [`Connection`](crate::DeviceConnection) polls an event.
+pub enum Event {
+    /// Data received from Astarte.
+    Data(DeviceEvent),
+    /// Change in the connection state.
+    Connection(ConnectionEvent),
+    #[cfg(feature = "message-hub")]
+    /// Events received from the message-hub
+    Forwarded(ConnectionEvent),
+}
+
+/// Astarte device data event.
+///
+/// Data structure received from the [`Client`](crate::DeviceClient) when the
 /// [`Connection`](crate::DeviceConnection) polls a valid event.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceEvent {
@@ -37,6 +51,60 @@ pub struct DeviceEvent {
     pub path: String,
     /// Payload of the event
     pub data: Value,
+}
+
+/// Astarte device connection event.
+///
+/// Data structure received from the [`Client`](crate::DeviceClient) when the
+/// [`Connection`](crate::DeviceConnection) polls a valid event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionEvent {
+    /// State of the connection.
+    pub state: ConnectionEventState,
+}
+
+impl Display for ConnectionEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.state)
+    }
+}
+
+/// State of the connection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConnectionEventState {
+    /// Initial connection state.
+    #[default]
+    Idle,
+    /// The Device is not yet registered with Astarte.
+    Unregistered,
+    /// Registered device, not yet connected.
+    Registered,
+    /// Connection with Astarte started.
+    Connecting,
+    /// Device connected with Astarte.
+    Connected,
+    /// Device disconnected from Astarte.
+    ///
+    /// This can be caused by a Network or Application error.
+    Disconnected,
+    /// The device is in an unknown connection state.
+    ///
+    /// This will be used for forward compatibility and possible state errors.
+    Unknown,
+}
+
+impl Display for ConnectionEventState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectionEventState::Idle => write!(f, "Idle"),
+            ConnectionEventState::Unregistered => write!(f, "Unregistered"),
+            ConnectionEventState::Registered => write!(f, "Registered"),
+            ConnectionEventState::Connecting => write!(f, "Connecting"),
+            ConnectionEventState::Connected => write!(f, "Connected"),
+            ConnectionEventState::Disconnected => write!(f, "Disconnected"),
+            ConnectionEventState::Unknown => write!(f, "Unknown"),
+        }
+    }
 }
 
 /// Conversion error from an [`DeviceEvent`].

@@ -25,7 +25,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use astarte_device_error::{Error, ResultExt, WrapError};
@@ -45,17 +44,20 @@ use astarte_message_hub_proto::{
 };
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
-use tracing::{error, trace, warn};
+use tracing::{error, instrument, trace};
 use uuid::Uuid;
 
 use self::convert::{try_from_individual, try_from_object, try_from_property};
 use self::error::GrpcError;
 use self::store::GrpcStore;
-use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, ValidatedProperty};
+use super::{
+    Connection, Disconnect, Publish, Receive, Register, TransportEvent, ValidatedProperty,
+};
 use crate::Timestamp;
 use crate::aggregate::AstarteObject;
 use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
 use crate::error::{AstarteError, ErrorKind, InterfaceError, Report};
+use crate::event::ConnectionEventState;
 use crate::interfaces::MappingRef;
 use crate::interfaces::{self, Interfaces};
 use crate::retention::{PublishInfo, RetentionId, StoredRetention};
@@ -326,8 +328,9 @@ where
         _interfaces: &Interfaces,
         added: &interfaces::Validated,
     ) -> Result<(), AstarteError> {
-        let interfaces_json = InterfacesJson::try_from_iter([added.deref()])
-            .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
+        let interfaces_json = InterfacesJson {
+            interfaces_json: vec![added.to_string()],
+        };
 
         self.client
             .add_interfaces(tonic::Request::new(interfaces_json))
@@ -345,8 +348,9 @@ where
         _interfaces: &Interfaces,
         added: &interfaces::ValidatedCollection,
     ) -> Result<(), AstarteError> {
-        let interfaces_json = InterfacesJson::try_from_iter(added.iter_interfaces())
-            .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
+        let interfaces_json = InterfacesJson {
+            interfaces_json: added.values().map(|s| s.to_string()).collect(),
+        };
 
         self.client
             .add_interfaces(tonic::Request::new(interfaces_json))
@@ -487,11 +491,11 @@ where
 {
     type Payload = GrpcPayload;
 
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, AstarteError> {
+    async fn next_event(&mut self) -> Result<TransportEvent<Self::Payload>, AstarteError> {
         loop {
             match self.next_message().await {
                 Ok(Some(message)) => {
-                    let event = match ReceivedEvent::try_from(message) {
+                    let event = match TransportEvent::try_from(message) {
                         Ok(event) => event,
                         Err(error) => {
                             error!(%error, "couldn't convert MessageHUb event");
@@ -500,17 +504,23 @@ where
                         }
                     };
 
-                    return Ok(Some(event));
+                    return Ok(event);
                 }
                 Err(status) => {
                     error!(%status, "error returned by the server");
 
-                    return Ok(None);
+                    return Ok(TransportEvent::Connection {
+                        state: ConnectionEventState::Disconnected,
+                        disconnected: true,
+                    });
                 }
                 Ok(None) => {
-                    warn!("Stream closed");
+                    error!("Stream closed");
 
-                    return Ok(None);
+                    return Ok(TransportEvent::Connection {
+                        state: ConnectionEventState::Disconnected,
+                        disconnected: true,
+                    });
                 }
             }
         }
@@ -521,7 +531,7 @@ where
         interfaces: &Interfaces,
     ) -> Result<AttemptStatus<Self::Payload>, AstarteError> {
         // try reattaching
-        let data = NodeData::try_from(interfaces).map_kind(ErrorKind::Grpc)?;
+        let data = NodeData::from(interfaces);
 
         match Grpc::<S>::attach(&mut self.client, data.clone()).await {
             Ok(stream) => {
@@ -651,9 +661,19 @@ where
 
     type Store = GrpcStore<S>;
 
-    async fn is_paired(&self) -> Result<bool, std::io::Error> {
-        // The device never pairs with the message-hub
-        Ok(false)
+    #[instrument(skip_all)]
+    async fn is_registered(&mut self) -> Result<bool, AstarteError> {
+        self.client
+            .is_registered(())
+            .await
+            .map(|resp| resp.into_inner().registered)
+            .map_err(|status| {
+                Error::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "checking if device is registered ",
+                )
+                .set_ctx(status)
+            })
     }
 }
 
@@ -732,22 +752,14 @@ struct NodeData {
     node: Node,
 }
 
-impl NodeData {
-    fn try_from_iter<'a, I>(interfaces: I) -> Result<Self, Error<GrpcError>>
-    where
-        I: IntoIterator<Item = &'a Interface>,
-    {
-        let node = Node::from_interfaces(interfaces).wrap_err(GrpcError::Introspection)?;
+impl<'a> From<&'a Interfaces> for NodeData {
+    fn from(value: &'a Interfaces) -> Self {
+        let node = Node {
+            interfaces_json: value.iter().map(|i| i.to_string()).collect(),
+            connection_events: true,
+        };
 
-        Ok(Self { node })
-    }
-}
-
-impl<'a> TryFrom<&'a Interfaces> for NodeData {
-    type Error = Error<GrpcError>;
-
-    fn try_from(value: &'a Interfaces) -> Result<Self, Self::Error> {
-        Self::try_from_iter(value.iter())
+        Self { node }
     }
 }
 
@@ -1039,7 +1051,13 @@ mod test {
                 .await
                 .unwrap();
         // poll the next message (error)
-        assert_eq!(connection.next_event().await.unwrap(), None);
+        assert_eq!(
+            connection.next_event().await.unwrap(),
+            TransportEvent::Connection {
+                state: ConnectionEventState::Disconnected,
+                disconnected: true
+            }
+        );
         // reconnect (second attach)
         assert_eq!(
             connection.reconnect(&Interfaces::new()).await.unwrap(),
@@ -1048,7 +1066,13 @@ mod test {
             }
         );
         // poll the next message (second error)
-        assert_eq!(connection.next_event().await.unwrap(), None);
+        assert_eq!(
+            connection.next_event().await.unwrap(),
+            TransportEvent::Connection {
+                state: ConnectionEventState::Disconnected,
+                disconnected: true
+            }
+        );
         // after the second error we reconnect with no messages
         assert_eq!(
             connection.reconnect(&Interfaces::new()).await.unwrap(),
@@ -1323,7 +1347,7 @@ mod test {
                 .await
                 .unwrap();
 
-        let Some(event) = connection.next_event().await.unwrap() else {
+        let TransportEvent::Received(event) = connection.next_event().await.unwrap() else {
             panic!("Event received did not match the pattern");
         };
 
@@ -1372,7 +1396,7 @@ mod test {
                 .await
                 .unwrap();
 
-        let Some(event) = connection.next_event().await.unwrap() else {
+        let TransportEvent::Received(event) = connection.next_event().await.unwrap() else {
             panic!("Event received did not match the pattern");
         };
 

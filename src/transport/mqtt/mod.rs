@@ -51,7 +51,10 @@ use itertools::Itertools;
 use rumqttc::{AckOfPub, QoS, Token, TokenError};
 use tracing::{debug, error, info, instrument, trace};
 
-use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, ValidatedProperty};
+use super::{
+    Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportEvent,
+    ValidatedProperty,
+};
 
 use self::config::transport::TransportProvider;
 use self::connection::MqttState;
@@ -59,6 +62,7 @@ use self::connection::context::ConnCtx;
 use self::payload::PayloadError;
 use crate::aggregate::AstarteObject;
 use crate::error::{AstarteError, ErrorKind, Report};
+use crate::event::ConnectionEventState;
 use crate::interfaces::{self, DeviceIntrospection, Interfaces, MappingRef};
 use crate::pairing::Pairing;
 use crate::pairing::api::PairingApiError;
@@ -806,7 +810,7 @@ where
 {
     type Payload = Bytes;
 
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, AstarteError>
+    async fn next_event(&mut self) -> Result<TransportEvent<Self::Payload>, AstarteError>
     where
         S: PropertyStore,
     {
@@ -815,11 +819,14 @@ where
             debug!("Incoming publish = {} {:x}", publish.topic, publish.payload);
 
             if let Some(event) = self.handle_publish(publish).await? {
-                return Ok(Some(event));
+                return Ok(TransportEvent::Received(event));
             }
         }
 
-        Ok(None)
+        Ok(TransportEvent::Connection {
+            state: ConnectionEventState::Disconnected,
+            disconnected: true,
+        })
     }
 
     async fn reconnect(
@@ -910,11 +917,17 @@ where
     type Store = S;
 
     #[instrument(skip(self), ret)]
-    async fn is_paired(&self) -> Result<bool, std::io::Error> {
+    async fn is_registered(&mut self) -> Result<bool, AstarteError> {
         self.connection
             .pairing
             .is_paired(self.state.config.writable_dir.as_deref())
             .await
+            .wrap_err_with(|err| {
+                Error::with(
+                    ErrorKind::Io(err.kind()),
+                    "while checking if device is received",
+                )
+            })
     }
 }
 

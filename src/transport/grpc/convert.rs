@@ -36,14 +36,12 @@ use itertools::Itertools;
 use tracing::error;
 
 use crate::aggregate::AstarteObject;
+use crate::event::{ConnectionEvent, ConnectionEventState};
 use crate::store::{OptStoredProp, StoredProp};
-use crate::types::{Double, TypeError};
-use crate::validate::ValidatedUnset;
-use crate::{DeviceEvent, Timestamp, Value};
-use crate::{
-    transport::ReceivedEvent, types::AstarteData, validate::ValidatedIndividual,
-    validate::ValidatedObject,
-};
+use crate::transport::{ReceivedEvent, TransportEvent};
+use crate::types::{AstarteData, Double, TypeError};
+use crate::validate::{ValidatedIndividual, ValidatedObject};
+use crate::{DeviceEvent, Timestamp, Value, validate::ValidatedUnset};
 
 use super::error::GrpcError;
 use super::{GrpcPayload, ValidatedProperty};
@@ -216,7 +214,7 @@ impl From<AstarteData> for ProtoDataWrapper {
 }
 
 // The received payload from the connection
-impl TryFrom<MessageHubEvent> for ReceivedEvent<GrpcPayload> {
+impl TryFrom<MessageHubEvent> for TransportEvent<GrpcPayload> {
     type Error = Error<GrpcError>;
 
     fn try_from(value: MessageHubEvent) -> Result<Self, Self::Error> {
@@ -225,21 +223,51 @@ impl TryFrom<MessageHubEvent> for ReceivedEvent<GrpcPayload> {
             "event",
         ))?;
 
-        let message = match event {
-            Event::Message(msg) => msg,
-            Event::Error(err) => return Err(Error::new(GrpcError::Server).set_ctx(err)),
+        match event {
+            Event::Message(message) => {
+                let payload = message.payload.ok_or(Error::with(
+                    GrpcError::Conversion(MessageHubProtoError::ExpectedField),
+                    "payload",
+                ))?;
+
+                Ok(TransportEvent::Received(ReceivedEvent {
+                    interface: message.interface_name,
+                    path: message.path,
+                    payload: GrpcPayload::new(payload),
+                }))
+            }
+            Event::Connection(conn_event) => {
+                Ok(TransportEvent::Forwarded(ConnectionEvent::from(conn_event)))
+            }
+            Event::Error(err) => Err(Error::new(GrpcError::Server).set_ctx(err)),
+        }
+    }
+}
+
+impl From<astarte_message_hub_proto::ConnectionEvent> for ConnectionEvent {
+    fn from(value: astarte_message_hub_proto::ConnectionEvent) -> Self {
+        let state = match value.state() {
+            astarte_message_hub_proto::ConnectionState::Unspecified
+            | astarte_message_hub_proto::ConnectionState::Unknown => ConnectionEventState::Unknown,
+            astarte_message_hub_proto::ConnectionState::Idle => ConnectionEventState::Idle,
+            astarte_message_hub_proto::ConnectionState::Unregistered => {
+                ConnectionEventState::Unregistered
+            }
+            astarte_message_hub_proto::ConnectionState::Registered => {
+                ConnectionEventState::Registered
+            }
+            astarte_message_hub_proto::ConnectionState::Connecting => {
+                ConnectionEventState::Connecting
+            }
+            astarte_message_hub_proto::ConnectionState::Connected => {
+                ConnectionEventState::Connected
+            }
+            astarte_message_hub_proto::ConnectionState::Disconnected => {
+                ConnectionEventState::Disconnected
+            }
         };
 
-        let payload = message.payload.ok_or(Error::with(
-            GrpcError::Conversion(MessageHubProtoError::ExpectedField),
-            "payload",
-        ))?;
-
-        Ok(ReceivedEvent {
-            interface: message.interface_name,
-            path: message.path,
-            payload: GrpcPayload::new(payload),
-        })
+        ConnectionEvent { state }
     }
 }
 

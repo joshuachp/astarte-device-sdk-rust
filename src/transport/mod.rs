@@ -34,6 +34,7 @@ use crate::{
     Timestamp,
     aggregate::AstarteObject,
     error::AstarteError,
+    event::ConnectionEventState,
     interfaces::{self, Interfaces, MappingRef},
     retention::{PublishInfo, RetentionId},
     store::{OptStoredProp, StoreCapabilities},
@@ -59,6 +60,15 @@ pub(crate) struct ReceivedEvent<P> {
     pub(crate) payload: P,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TransportEvent<P> {
+    Received(ReceivedEvent<P>),
+    Connection {
+        state: ConnectionEventState,
+        disconnected: bool,
+    },
+}
+
 /// Trait to link a Sender to a Connection.
 pub trait Connection: Send + Sync {
     /// Sender for the connection.
@@ -71,10 +81,8 @@ pub trait Connection: Send + Sync {
     /// with a connection.
     type Store: StoreCapabilities;
 
-    /// Checks whether the device is paired.
-    ///
-    /// In case of the MQTT connection is when the device is paired on Astarte.
-    fn is_paired(&self) -> impl Future<Output = Result<bool, std::io::Error>> + Send;
+    /// Checks whether the device is paired with Astarte.
+    fn is_registered(&mut self) -> impl Future<Output = Result<bool, AstarteError>> + Send;
 }
 
 /// Implement the publication for a connection.
@@ -157,7 +165,7 @@ pub(crate) trait Receive {
     /// This function returns [`None`] to signal a disconnection from Astarte.
     fn next_event(
         &mut self,
-    ) -> impl Future<Output = Result<Option<ReceivedEvent<Self::Payload>>, AstarteError>> + Send;
+    ) -> impl Future<Output = Result<TransportEvent<Self::Payload>, AstarteError>> + Send;
 
     /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
     /// [`Receive::next_event`] returns [`None`].

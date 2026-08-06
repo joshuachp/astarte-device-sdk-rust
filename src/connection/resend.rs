@@ -372,7 +372,7 @@ where
                     break;
                 }
                 AttemptStatus::ReceivedEvent(event) => {
-                    self.handle_and_send_to_client(event).await?;
+                    self.handle_and_send_data(event).await?;
                 }
                 AttemptStatus::Disconnected => {
                     let timeout = self.backoff.next();

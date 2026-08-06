@@ -28,7 +28,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::aggregate::AstarteObject;
 use crate::error::{AstarteError, ErrorKind, InterfaceError};
-use crate::event::DeviceEvent;
+use crate::event::{ConnectionEvent, DeviceEvent, Event};
 use crate::logging::security::{SecurityEvent, notify_security_event};
 use crate::pairing::Pairing;
 use crate::retention::memory::{ItemValue, VolatileItemError};
@@ -268,7 +268,7 @@ pub trait Client: Clone {
     ///
     /// An event can only be received once, so if the client is cloned only one of the clients
     /// instances will receive the message.
-    fn recv(&self) -> impl Future<Output = Option<DeviceEvent>> + Send;
+    fn recv(&self) -> impl Future<Output = Option<Event>> + Send;
 }
 
 /// Connection of the Client.
@@ -298,7 +298,8 @@ where
     // We use multi producer multi consumer instead of the mpsc channel for the DeviceEvents for the connection to che
     // client since we need the Receiver end to be cloneable.
     // The tokio Broadcast channel provides an async mpmc, but suffer from the "slow receiver" problem.
-    events: async_channel::Receiver<DeviceEvent>,
+    data_events: async_channel::Receiver<DeviceEvent>,
+    conn_events: async_channel::Receiver<ConnectionEvent>,
     pub(crate) disconnect: async_channel::Sender<()>,
     pub(crate) store: C::Store,
     pub(crate) state: ClientState,
@@ -310,14 +311,16 @@ where
 {
     pub(crate) fn new(
         sender: C::Sender,
-        rx: async_channel::Receiver<DeviceEvent>,
+        data_events: async_channel::Receiver<DeviceEvent>,
+        conn_events: async_channel::Receiver<ConnectionEvent>,
         store: C::Store,
         state: ClientState,
         disconnect: async_channel::Sender<()>,
     ) -> Self {
         Self {
             sender,
-            events: rx,
+            data_events,
+            conn_events,
             store,
             state,
             disconnect,
@@ -496,7 +499,8 @@ where
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
-            events: self.events.clone(),
+            data_events: self.data_events.clone(),
+            conn_events: self.conn_events.clone(),
             store: self.store.clone(),
             state: self.state.clone(),
             disconnect: self.disconnect.clone(),
@@ -590,14 +594,33 @@ where
         self.send_unset(interface_name, &path).await
     }
 
-    async fn recv(&self) -> Option<DeviceEvent> {
-        match self.events.recv().await {
-            Ok(event) => Some(event),
-            Err(error) => {
-                // Use the error message
-                info!("{error}");
+    async fn recv(&self) -> Option<Event> {
+        tokio::select! {
+            biased;
 
-                None
+            data = self.data_events.recv() => {
+
+                match data {
+                    Ok(event) => Some(Event::Data(event)),
+                    Err(error) => {
+                        // Use the error message
+                        info!("{error}");
+
+                        None
+                    }
+                }
+            }
+            data = self.data_events.recv() => {
+
+                match data {
+                    Ok(event) => Some(Event::Data(event)),
+                    Err(error) => {
+                        // Use the error message
+                        info!("{error}");
+
+                        None
+                    }
+                }
             }
         }
     }
@@ -824,7 +847,8 @@ pub(crate) mod tests {
         let interfaces = Interfaces::from_iter(interfaces);
 
         let sender = MockSender::new();
-        let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
+        let (data_events_tx, data_events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
+        let (conn_events_tx, conn_events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
         let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
 
         let mut state = SharedState::new(
@@ -837,7 +861,8 @@ pub(crate) mod tests {
 
         let client = DeviceClient::new(
             sender,
-            events_rx,
+            data_events_rx,
+            conn_events_rx,
             store,
             ClientState::new(Arc::new(state)),
             disconnect_tx,
@@ -846,7 +871,7 @@ pub(crate) mod tests {
         TestClient {
             client,
             disconnect: disconnect_rx,
-            events: events_tx,
+            events: data_events_tx,
         }
     }
 
@@ -880,7 +905,9 @@ pub(crate) mod tests {
 
         client.events.send(exp.clone()).await.unwrap();
 
-        let event = client.recv().await.unwrap();
+        let Event::Data(event) = client.recv().await.unwrap() else {
+            panic!("not a data event")
+        };
 
         assert_eq!(event, exp);
     }

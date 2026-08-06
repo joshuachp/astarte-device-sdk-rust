@@ -51,12 +51,15 @@ use crate::store::PropertyStore;
 use crate::store::StoreCapabilities;
 use crate::transport::Connection;
 
-/// Default capacity of the channels
+/// Default capacity of the data channels
 ///
 /// This constant is the default bounded channel size for *both* the rumqttc AsyncClient and
 /// EventLoop and the internal channel used by the [`DeviceClient`] and [`DeviceConnection`] to send
 /// events data to the external receiver and between each component.
 pub const DEFAULT_CHANNEL_SIZE: NonZero<usize> = NonZero::new(50).unwrap();
+
+/// Default capacity of the connection events channel.
+pub const DEFAULT_MAX_CONNECTION_EVENTS: NonZero<usize> = NonZero::new(5).unwrap();
 
 /// Default capacity for the number of packets with retention volatile to store in memory.
 pub const DEFAULT_VOLATILE_CAPACITY: NonZero<usize> = NonZero::new(1000).unwrap();
@@ -95,6 +98,8 @@ pub struct Config {
     pub writable_dir: Option<PathBuf>,
     /// Channel size
     pub channel_size: NonZero<usize>,
+    /// Connection events channel size
+    pub max_connection_events: NonZero<usize>,
     /// Connection timeout
     pub connection_timeout: Duration,
     /// Send or write timeout
@@ -116,6 +121,7 @@ impl Default for Config {
         Self {
             writable_dir: None,
             channel_size: DEFAULT_CHANNEL_SIZE,
+            max_connection_events: DEFAULT_MAX_CONNECTION_EVENTS,
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             send_timeout: DEFAULT_REQUEST_TIMEOUT,
             recv_timeout: DEFAULT_REQUEST_TIMEOUT,
@@ -255,6 +261,13 @@ impl<S, C> DeviceBuilder<S, C> {
     /// This method configures the bounded channel size.
     pub fn channel_size(mut self, size: NonZero<usize>) -> Self {
         self.config.channel_size = size;
+
+        self
+    }
+
+    /// This method configures the bounded connection events channel size.
+    pub fn max_connection_events(mut self, size: NonZero<usize>) -> Self {
+        self.config.max_connection_events = size;
 
         self
     }
@@ -408,6 +421,8 @@ where
         }
 
         let (events_tx, events_rx) = async_channel::bounded(self.config.channel_size.get());
+        let (conn_events_tx, conn_events_rx) =
+            async_channel::bounded(self.config.max_connection_events.get());
         let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
 
         let volatile_store = VolatileStore::with_capacity(self.volatile_retention.get());
@@ -432,17 +447,12 @@ where
         };
 
         let DeviceTransport {
-            connection,
+            mut connection,
             sender,
             store,
         } = self.connection_config.connect(config).await?;
 
-        let paired = connection.is_paired().await.wrap_err_with(|err| {
-            Error::with(
-                ErrorKind::Io(err.kind()),
-                "while checking if device is paired",
-            )
-        })?;
+        let paired = connection.is_registered().await?;
 
         debug!(paired, "device pairing status");
 
@@ -453,6 +463,7 @@ where
         let client = DeviceClient::new(
             sender.clone(),
             events_rx,
+            conn_events_rx,
             store.clone(),
             client_state,
             disconnect_tx,
@@ -460,6 +471,7 @@ where
 
         let connection = DeviceConnection::new(
             events_tx,
+            conn_events_tx,
             disconnect_rx,
             store,
             connection_state,
@@ -611,7 +623,7 @@ mod test {
 
                 let mut connection = MockCon::new();
 
-                connection.expect_is_paired().with().returning(|| futures::future::ok(true).boxed());
+                connection.expect_is_registered().with().returning(|| futures::future::ok(true).boxed());
 
                 Ok(DeviceTransport {
                     connection,

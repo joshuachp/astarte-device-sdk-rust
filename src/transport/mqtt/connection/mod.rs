@@ -72,7 +72,7 @@ fn is_tls_error(error: &Error<MqttError>) -> Option<&rustls::Error> {
 pub(crate) struct MqttState<P> {
     /// The device is disconnected from Astarte, it will need to recreate the connection.
     pub(crate) pairing: P,
-    state: State,
+    pub(crate) state: State,
 }
 
 impl<P> MqttState<P> {

@@ -55,7 +55,7 @@ mock! {
         type Sender = MockSender;
         type Store = S;
 
-        fn is_paired(&self) -> impl Future<Output = Result<bool, std::io::Error>> + Send {
+        fn is_registered(&mut self) -> impl Future<Output = Result<bool, AstarteError>> + Send {
         }
     }
 
@@ -64,7 +64,7 @@ mock! {
 
         async fn next_event(
             &mut self,
-        ) -> Result<Option<ReceivedEvent<GenericPayload>>, AstarteError>;
+        ) -> Result<ReceivedEvent<GenericPayload>, AstarteError>;
 
         fn reconnect(&mut self, interfaces: &Interfaces) -> impl Future<Output = Result<crate::transport::AttemptStatus<GenericPayload>, AstarteError>> + Send {
         }
